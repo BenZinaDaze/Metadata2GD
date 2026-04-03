@@ -1,6 +1,7 @@
 # Metadata2GD
 
-> 自动为 Google Drive 上的媒体文件查询 TMDB 元数据、生成 NFO、整理目录结构，并发送 Telegram 入库通知。
+> 自动为 Google Drive 上的媒体文件查询 TMDB 元数据、生成 NFO、整理目录结构，并发送 Telegram 入库通知。  
+> 现已内置 **Web UI**，可在浏览器中可视化查看媒体库状态。
 
 ---
 
@@ -15,7 +16,10 @@
 | **目录整理** | 在 Drive 按标准结构幂等创建文件夹，将文件移动并标准化命名 |
 | **封面上传** | 下载 TMDB 封面图，上传 `poster.jpg` / `fanart.jpg` / `season01-poster.jpg` |
 | **Telegram 通知** | 带封面图的入库通知，多集合并为一条消息，支持防抖延时 |
-| **Webhook 触发** | 提供 HTTP Server，配合 Aria2 + Rclone 上传完成后自动触发 |
+| **Webhook 触发** | HTTP 接口 `POST /trigger`，配合 Aria2 + Rclone 上传完成后自动触发 |
+| **Web UI** | 浏览器可视化媒体库（电影 + 剧集）、季集入库进度、TMDB 信息 |
+| **JWT 登录鉴权** | Web UI 及 API 均受 JWT 保护，支持 Webhook Secret 独立校验 |
+| **TMDB 本地缓存** | SQLite 缓存减少重复请求，支持 TTL 自动过期与负缓存 |
 
 ### Drive 目录结构
 
@@ -49,7 +53,7 @@
 
 ```
 metadata2gd-config/
-├─ config.yaml          # 主配置文件（从 config/config.yaml 复制后修改）
+├─ config.yaml          # 主配置文件（从 config/config.example.yaml 复制后修改）
 ├─ credentials.json     # Google OAuth2 凭据（auth_mode = oauth2 时）
 ├─ token.json           # OAuth2 Token（首次运行后自动生成）
 └─ service_account.json # Service Account JSON（auth_mode = service_account 时）
@@ -74,13 +78,18 @@ docker run --rm -it \
 ### 3. 配置 `config.yaml`
 
 ```bash
-cp config/config.yaml metadata2gd-config/config.yaml
+cp config/config.example.yaml metadata2gd-config/config.yaml
 # 然后编辑 metadata2gd-config/config.yaml
 ```
 
 最少需要填写的字段：
 
 ```yaml
+webui:
+  username: "admin"          # Web UI 登录用户名
+  password: "your_password"  # Web UI 登录密码（必填，否则无法登录）
+  webhook_secret: ""         # /trigger 端点密钥，留空则不校验（内网可留空）
+
 tmdb:
   api_key: "你的_TMDB_API_Key"   # https://www.themoviedb.org/settings/api
 
@@ -97,13 +106,13 @@ telegram:
   chat_id:   "你的_Chat_ID"
 ```
 
-> **获取 Drive 文件夹 ID**：在 Drive 网页版打开文件夹，URL 末尾即为 ID
+> **获取 Drive 文件夹 ID**：在 Drive 网页版打开文件夹，URL 末尾即为 ID  
 > `https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn` → ID = `1AbCdEfGhIjKlMn`
 
 ### 4. 启动服务
 
 ```bash
-docker compose up -d metadata2gd
+docker compose up -d
 ```
 
 查看日志：
@@ -112,6 +121,31 @@ docker compose up -d metadata2gd
 docker logs -f metadata2gd
 ```
 
+### 5. 访问 Web UI
+
+服务启动后，浏览器访问：
+
+```
+http://localhost:8765
+```
+
+使用 `config.yaml` 中配置的用户名和密码登录。
+
+---
+
+## Web UI
+
+Web UI 基于 React + Vite 构建，提供以下页面：
+
+| 页面 | 功能 |
+|---|---|
+| **登录** | JWT 鉴权登录，Token 默认 24 小时有效 |
+| **媒体库** | 电影 / 剧集卡片展示，含 TMDB 海报、评分、概述 |
+| **剧集详情** | 按季展示每集入库状态，区分已入库（✅）与未入库 |
+| **配置** | 查看当前配置项（只读），手动刷新媒体库快照 |
+
+媒体库数据来自本地 SQLite 快照（`data/library.db`），无需每次访问都扫描 Drive。点击「刷新媒体库」时才重新扫描 Drive 并更新快照。
+
 ---
 
 ## 配置参考
@@ -119,6 +153,15 @@ docker logs -f metadata2gd
 完整配置项说明（`config.yaml`）：
 
 ```yaml
+# ── Web UI & 认证 ──────────────────────────────────
+webui:
+  username: "admin"          # 登录用户名，默认 admin
+  password: ""               # 登录密码（必填，留空将无法登录）
+  secret_key: ""             # JWT 签名密钥；留空则自动生成并保存到 data/.jwt_secret
+                             # 生产环境建议指定固定值，避免重启后 Token 失效
+  token_expire_hours: 24     # JWT Token 有效期（小时）
+  webhook_secret: ""         # /trigger 端点密钥；留空则不校验（仅内网部署时可留空）
+
 # ── TMDB ──────────────────────────────────────────
 tmdb:
   api_key: ""          # TMDB v3 API Key（必填）
@@ -171,6 +214,33 @@ telegram:
 
 ---
 
+## API 接口
+
+所有 `/api/*` 接口均需在请求头中携带 JWT Token（登录后获得）：
+
+```
+Authorization: Bearer <token>
+```
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `POST` | `/api/auth/login` | 登录，返回 JWT token（无需鉴权） |
+| `GET` | `/api/auth/me` | 验证 Token，返回当前用户名 |
+| `POST` | `/api/auth/logout` | 登出（前端清除 Token） |
+| `GET` | `/api/library` | 从本地快照读取完整媒体库 |
+| `POST` | `/api/library/refresh` | 扫描 Drive，更新本地快照 |
+| `GET` | `/api/library/movies` | 仅获取电影列表（实时扫描） |
+| `GET` | `/api/library/tv` | 仅获取剧集列表（实时扫描） |
+| `GET` | `/api/tv/{tmdb_id}` | 单部剧集详情（含季集入库状态） |
+| `GET` | `/api/stats` | 统计信息（总数、完成率等） |
+| `GET` | `/api/cache/stats` | TMDB 缓存使用情况 |
+| `POST` | `/api/cache/evict` | 手动清理过期缓存 |
+| `POST` | `/trigger` | Webhook：触发 pipeline（需 Webhook Secret） |
+| `GET` | `/trigger/status` | 查询 pipeline 运行状态 |
+| `GET` | `/health` | 健康检查接口（无需鉴权） |
+
+---
+
 ## 使用方式
 
 ### 方式一：手动触发（一次性整理）
@@ -191,22 +261,25 @@ docker exec metadata2gd python pipeline.py --no-images
 
 ### 方式二：Webhook 自动触发（配合 Aria2 + Rclone）
 
-`metadata2gd` 容器内运行 HTTP Server，监听 `POST /trigger`。
+`metadata2gd` 容器内运行 FastAPI Server，监听 `POST /trigger`（端口 `8765`）。
 
 在 Rclone 的 `upload.sh`（P3TERX aria2 方案）中，上传完成后自动调用：
 
 ```bash
-curl -sf -X POST http://localhost:46562/trigger \
+curl -sf -X POST http://localhost:8765/trigger \
      -H "Content-Type: application/json" \
+     -H "X-Webhook-Secret: your_webhook_secret" \
      -d '{"path": "/path/to/uploaded/file"}'
 ```
 
-**防抖机制**：配置 `debounce_seconds: 60` 后，批量上传13集时，最后一集上传完毕 60 秒后才触发一次 pipeline，TG 只收到一条包含所有集数的通知。
+若 `webui.webhook_secret` 配置为空，则无需传 `X-Webhook-Secret` 头（适合内网部署）。
+
+**防抖机制**：配置 `debounce_seconds: 60` 后，批量上传 13 集时，最后一集上传完毕 60 秒后才触发一次 pipeline，Telegram 只收到一条包含所有集数的通知。
 
 **健康检查：**
 
 ```bash
-curl http://localhost:46562/health
+curl http://localhost:8765/health
 # {"status": "ok"}
 ```
 
@@ -242,7 +315,7 @@ Season 01：
 
 ## 与 Aria2-Pro + Rclone 配合使用
 
-`docker-compose.yml` 已包含 `aria2-pro` 和 `metadata2gd` 两个服务，均使用 `network_mode: host`，通过 `localhost:46562` 互相通信。
+`docker-compose.yml` 已包含 `aria2-pro` 和 `metadata2gd` 两个服务，均使用 `network_mode: host`，通过 `localhost:8765` 互相通信。
 
 ### 整体流程
 
@@ -254,32 +327,41 @@ Aria2 下载完成
         → Pipeline 扫描 Drive
           → TMDB 查询 → NFO 生成 → 文件整理
             → Telegram 入库通知
+              → 自动刷新 Web UI 快照
 ```
 
 ### 替换 upload.sh
 
-P3TERX 的 [aria2.conf](https://github.com/P3TERX/aria2.conf) 方案使用 `upload.sh` 在 Rclone 上传完成后执行自定义逻辑。需要将本仓库提供的 `upload.sh` 复制到 aria2 配置目录，替换原版文件。
+P3TERX 的 [aria2.conf](https://github.com/P3TERX/aria2.conf) 方案使用 `upload.sh` 在 Rclone 上传完成后执行自定义逻辑。将本仓库提供的示例脚本复制后修改：
 
 ```bash
-# 将 upload.sh 复制到 aria2 配置目录（覆盖原版）
-cp upload.sh aria2-config/upload.sh
+# 复制示例脚本
+cp scripts/upload.example.sh aria2-config/upload.sh
+
+# 编辑 upload.sh，填入你的 webhook_secret（与 config.yaml 保持一致）
+# METADATA2GD_WEBHOOK_SECRET="your_webhook_secret_here"
 ```
 
-> **注意**：本仓库的 `upload.sh` 基于 P3TERX 原版修改，在上传完成后额外调用了 `RUN_METADATA2GD` 函数触发整理流水线，其余逻辑与原版完全一致。
+> **注意**：`scripts/upload.example.sh` 基于 P3TERX 原版修改，在上传完成后额外调用了 `RUN_METADATA2GD` 函数触发整理流水线，其余逻辑与原版完全一致。
 
-**新增的关键函数（upload.sh 第 93–118 行）：**
+**新增的关键函数（upload.sh）：**
 
 ```bash
 RUN_METADATA2GD() {
-    local WEBHOOK_URL="http://localhost:46562/trigger"
+    local WEBHOOK_URL="http://localhost:8765/trigger"
+    local WEBHOOK_SECRET="${METADATA2GD_WEBHOOK_SECRET}"
 
     # 仅在上传成功时触发
     [[ "${UPLOAD_SUCCESS}" != "1" ]] && return 0
 
-    curl -sf --max-time 10 \
-        -X POST "${WEBHOOK_URL}" \
+    local CURL_ARGS=(-sf --max-time 10 -X POST "${WEBHOOK_URL}" \
         -H "Content-Type: application/json" \
-        -d "{\"path\": \"${REMOTE_PATH}\"}"
+        -d "{\"path\": \"${REMOTE_PATH}\"}")
+
+    # 有密钥时加入鉴权 header
+    [[ -n "${WEBHOOK_SECRET}" ]] && CURL_ARGS+=(-H "X-Webhook-Secret: ${WEBHOOK_SECRET}")
+
+    curl "${CURL_ARGS[@]}"
 }
 ```
 
@@ -295,6 +377,8 @@ docker compose up -d
 
 ## 本地开发
 
+### 后端
+
 ```bash
 # 安装依赖
 pip install -r requirements.txt
@@ -302,6 +386,66 @@ pip install -r requirements.txt
 # 运行流水线（需已有 config/config.yaml 和认证文件）
 python pipeline.py --dry-run
 
-# 构建镜像
+# 启动 Web UI 后端
+uvicorn webui.api:app --host 0.0.0.0 --port 8765 --reload
+```
+
+### 前端
+
+```bash
+cd frontend
+
+# 安装依赖
+npm install
+
+# 开发模式（代理到 localhost:8765）
+npm run dev
+
+# 构建生产包
+npm run build
+# 产物输出到 frontend/dist/，由后端静态托管
+```
+
+### 构建镜像
+
+```bash
+# 构建前端
+cd frontend && npm run build && cd ..
+
+# 构建 Docker 镜像
 docker build -t benz1/metadata2gd:latest .
+```
+
+---
+
+## 项目结构
+
+```
+Metadata2GD/
+├─ pipeline.py              # 核心整理流水线
+├─ mediaparser/             # 文件名解析模块
+│  └─ config.py             # 配置类（含 WebAuthConfig）
+├─ drive/                   # Google Drive 客户端
+├─ webui/                   # Web UI 后端（FastAPI）
+│  ├─ api.py                # REST API + Webhook + 鉴权
+│  ├─ library_store.py      # SQLite 媒体库快照存储
+│  └─ tmdb_cache.py         # TMDB 响应 SQLite 缓存
+├─ frontend/                # Web UI 前端（React + Vite）
+│  └─ src/
+│     ├─ components/        # LoginPage / LibraryPage / ConfigPage 等
+│     └─ api.js             # 前端 API 封装
+├─ config/
+│  └─ config.example.yaml   # 配置文件模板（不含真实密钥）
+├─ scripts/
+│  ├─ upload.example.sh     # Rclone 上传脚本示例（不含真实密钥）
+│  ├─ build.sh              # 镜像构建脚本
+│  ├─ backfill_nfo.py       # 补录 NFO 工具
+│  └─ fix_existing.py       # 修复已有文件命名工具
+├─ data/                    # 运行时数据（自动创建，不提交 git）
+│  ├─ library.db            # 媒体库快照
+│  ├─ tmdb_cache.db         # TMDB 缓存
+│  └─ .jwt_secret           # 自动生成的 JWT 密钥
+├─ docker-compose.yml
+├─ Dockerfile
+└─ requirements.txt
 ```
