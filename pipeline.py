@@ -380,7 +380,7 @@ class Pipeline:
                     logger.warning("上传 tvshow.nfo 失败：%s", e)
                     print(f"      tvshow.nfo：失败 — {e}")
             elif top_folder_id and top_folder_id in self._tvshow_nfo_done:
-                print(f"      tvshow.nfo：已上传（跳过）")
+                pass  # 已上传，静默跳过
             elif self._dry_run:
                 print(f"      tvshow.nfo：→ 剧名文件夹  [dry-run]")
 
@@ -401,7 +401,7 @@ class Pipeline:
                     logger.warning("上传 season.nfo 失败：%s", e)
                     print(f"      season.nfo：失败 — {e}")
             elif season_folder_id in self._season_nfo_done:
-                print(f"      season.nfo：已上传（跳过）")
+                pass  # 已上传，静默跳过
             elif self._dry_run:
                 print(f"      season.nfo：→ Season {season_num} 文件夹  [dry-run]")
 

@@ -236,7 +236,7 @@ Authorization: Bearer <token>
 | `GET` | `/api/cache/stats` | TMDB 缓存使用情况 |
 | `POST` | `/api/cache/evict` | 手动清理过期缓存 |
 | `POST` | `/trigger` | Webhook：触发 pipeline（需 Webhook Secret） |
-| `GET` | `/trigger/status` | 查询 pipeline 运行状态 |
+| `GET` | `/api/pipeline/status` | 查询 pipeline 运行状态（需登录） |
 | `GET` | `/health` | 健康检查接口（无需鉴权） |
 
 ---

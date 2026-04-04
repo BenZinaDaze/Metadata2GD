@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   addAria2Torrent,
   addAria2Uri,
@@ -491,10 +491,39 @@ export default function DownloadsPage({ queue = 'all', onChangeQueue, onToast, i
     }
   }
 
+  const pollTimer = useRef(null)
+  const errorCount = useRef(0)
+
   useEffect(() => {
-    loadAll()
-    const id = setInterval(() => loadAll(true), 5000)
-    return () => clearInterval(id)
+    let cancelled = false
+
+    async function poll(silent = false) {
+      try {
+        if (!silent) setLoading(true)
+        const overviewRes = await getAria2Overview()
+        if (cancelled) return
+        setOverview(overviewRes.data)
+        setError(null)
+        errorCount.current = 0          // 成功后重置退避计数器
+      } catch (e) {
+        if (cancelled) return
+        setError(e?.response?.data?.detail || e.message)
+        errorCount.current += 1
+      } finally {
+        if (cancelled) return
+        if (!silent) setLoading(false)
+        // 逾退策略：0 次错=5s, 1次=10s, 2次=20s, ≥3次=30s
+        const delays = [5000, 10000, 20000, 30000]
+        const delay = delays[Math.min(errorCount.current, delays.length - 1)]
+        pollTimer.current = setTimeout(() => poll(true), delay)
+      }
+    }
+
+    poll()
+    return () => {
+      cancelled = true
+      if (pollTimer.current) clearTimeout(pollTimer.current)
+    }
   }, [])
 
   const tasks = useMemo(() => {
