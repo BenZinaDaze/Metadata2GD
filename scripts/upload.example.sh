@@ -95,7 +95,7 @@ LOAD_RCLONE_ENV() {
 
 RUN_METADATA2GD() {
     # host 网络模式下同宿主机，直接用 localhost
-    local WEBHOOK_URL="http://localhost:8765/trigger"
+    local WEBHOOK_URL="http://localhost:38765/trigger"
     local TIMEOUT=10   # 秒，只等 HTTP 响应，pipeline 在容器内异步运行
 
     local WEBHOOK_SECRET="${METADATA2GD_WEBHOOK_SECRET}"

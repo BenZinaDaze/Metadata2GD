@@ -27,7 +27,7 @@ COPY frontend/dist/ ./frontend/dist/
 RUN mkdir -p /app/data
 
 # WebUI + Webhook 统一端口
-EXPOSE 8765
+EXPOSE 38765
 
-# 单进程启动：WebUI API + Webhook /trigger 均在 8765
-CMD ["uvicorn", "webui.api:app", "--host", "0.0.0.0", "--port", "8765"]
+# 单进程启动：WebUI API + Webhook /trigger 均在 38765
+CMD ["uvicorn", "webui.api:app", "--host", "0.0.0.0", "--port", "38765"]

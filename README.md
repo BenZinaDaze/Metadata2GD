@@ -126,7 +126,7 @@ docker logs -f metadata2gd
 服务启动后，浏览器访问：
 
 ```
-http://localhost:8765
+http://localhost:38765
 ```
 
 使用 `config.yaml` 中配置的用户名和密码登录。
@@ -261,12 +261,12 @@ docker exec metadata2gd python pipeline.py --no-images
 
 ### 方式二：Webhook 自动触发（配合 Aria2 + Rclone）
 
-`metadata2gd` 容器内运行 FastAPI Server，监听 `POST /trigger`（端口 `8765`）。
+`metadata2gd` 容器内运行 FastAPI Server，监听 `POST /trigger`（端口 `38765`）。
 
 在 Rclone 的 `upload.sh`（P3TERX aria2 方案）中，上传完成后自动调用：
 
 ```bash
-curl -sf -X POST http://localhost:8765/trigger \
+curl -sf -X POST http://localhost:38765/trigger \
      -H "Content-Type: application/json" \
      -H "X-Webhook-Secret: your_webhook_secret" \
      -d '{"path": "/path/to/uploaded/file"}'
@@ -279,7 +279,7 @@ curl -sf -X POST http://localhost:8765/trigger \
 **健康检查：**
 
 ```bash
-curl http://localhost:8765/health
+curl http://localhost:38765/health
 # {"status": "ok"}
 ```
 
@@ -315,7 +315,7 @@ Season 01：
 
 ## 与 Aria2-Pro + Rclone 配合使用
 
-`docker-compose.yml` 已包含 `aria2-pro` 和 `metadata2gd` 两个服务，均使用 `network_mode: host`，通过 `localhost:8765` 互相通信。
+`docker-compose.yml` 已包含 `aria2-pro` 和 `metadata2gd` 两个服务，均使用 `network_mode: host`，通过 `localhost:38765` 互相通信。
 
 ### 整体流程
 
@@ -348,7 +348,7 @@ cp scripts/upload.example.sh aria2-config/upload.sh
 
 ```bash
 RUN_METADATA2GD() {
-    local WEBHOOK_URL="http://localhost:8765/trigger"
+    local WEBHOOK_URL="http://localhost:38765/trigger"
     local WEBHOOK_SECRET="${METADATA2GD_WEBHOOK_SECRET}"
 
     # 仅在上传成功时触发
@@ -387,7 +387,7 @@ pip install -r requirements.txt
 python pipeline.py --dry-run
 
 # 启动 Web UI 后端
-uvicorn webui.api:app --host 0.0.0.0 --port 8765 --reload
+uvicorn webui.api:app --host 0.0.0.0 --port 38765 --reload
 ```
 
 ### 前端
@@ -398,7 +398,7 @@ cd frontend
 # 安装依赖
 npm install
 
-# 开发模式（代理到 localhost:8765）
+# 开发模式（代理到 localhost:38765）
 npm run dev
 
 # 构建生产包
