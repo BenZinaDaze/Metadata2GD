@@ -38,8 +38,6 @@ services:
     volumes:
       # Google Drive 认证文件，不打包进镜像
       - ${PWD}/metadata2gd-config:/app/config
-      # 运行时数据（SQLite DB 等），持久化避免容器重建后丢失
-      - ${PWD}/metadata2gd-data:/app/data
     network_mode: host
     restart: unless-stopped
     logging:

@@ -1,0 +1,65 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    tags:
+      - 'v*'          # 只有 v 开头的 tag 才触发（如 v1.0.0、v2.1.3）
+  pull_request:
+    branches:
+      - main          # PR 到 main 时只构建验证，不推送
+  workflow_dispatch:  # 允许手动触发
+
+env:
+  DOCKERHUB_IMAGE: benz1/metadata2gd
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment: Dockerhub   # 声明使用该 Environment，才能读取其中的 secrets
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 设置 QEMU（用于多平台交叉编译，支持 arm64 等）
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 设置 Docker Buildx（支持多平台 + 缓存）
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 登录 Docker Hub（PR 时跳过）
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 自动生成镜像标签
+      # - tag v1.2.3 push → :v1.2.3、:1.2、:latest
+      # - PR             → 仅构建，不推送
+      # - 手动触发       → 构建并推送 :latest
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+
+      # 构建并推送
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64   # 同时构建 x86_64 和 ARM64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 使用 GitHub Actions 缓存加速构建
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
