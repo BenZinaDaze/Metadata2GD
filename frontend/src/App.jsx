@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { setUnauthorizedHandler, getMe, refreshLibrary, getAria2Overview } from './api'
 import './index.css'
 import LoginPage from './components/LoginPage'
@@ -55,6 +55,9 @@ export default function App() {
   }, [])
 
   // ── 全局维持 aria2 连接状态 ─────────────────────────
+  const aria2ErrorCount = useRef(0)
+  const aria2PollTimer = useRef(null)
+
   useEffect(() => {
     if (!token) {
       setAria2Overview(null)
@@ -70,21 +73,29 @@ export default function App() {
         if (!cancelled) {
           setAria2Overview(res.data)
           setAria2ConnectionStatus('connected')
+          aria2ErrorCount.current = 0
         }
       } catch {
         if (!cancelled) {
           setAria2Overview(null)
           setAria2ConnectionStatus('error')
+          aria2ErrorCount.current += 1
+        }
+      } finally {
+        if (!cancelled) {
+          // 退避策略：0 次错=5s, 1次=10s, 2次=20s, ≥3次=30s
+          const delays = [5000, 10000, 20000, 30000]
+          const delay = delays[Math.min(aria2ErrorCount.current, delays.length - 1)]
+          aria2PollTimer.current = setTimeout(loadAria2Overview, delay)
         }
       }
     }
 
     setAria2ConnectionStatus('connecting')
     loadAria2Overview()
-    const id = setInterval(loadAria2Overview, 5000)
     return () => {
       cancelled = true
-      clearInterval(id)
+      if (aria2PollTimer.current) clearTimeout(aria2PollTimer.current)
     }
   }, [token])
 

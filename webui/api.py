@@ -116,10 +116,10 @@ def _infer_pipeline_log_level(line: str) -> str:
     text = line.lower()
     if "❌" in line or "失败" in line or "异常" in line or "error" in text:
         return "ERROR"
-    if "⚠" in line or "warning" in text or "跳过" in line:
-        return "WARNING"
     if "✓" in line or "完成" in line or "已上传" in line or "移动：" in line:
         return "SUCCESS"
+    if "⚠" in line or "warning" in text or "跳过" in line:
+        return "WARNING"
     return "INFO"
 
 
@@ -440,7 +440,7 @@ def _aria2_rpc_call(method: str, params: Optional[List[Any]] = None) -> Any:
     }
 
     try:
-        resp = _aria2_http.post(_aria2_rpc_url(), json=payload, timeout=15)
+        resp = _aria2_http.post(_aria2_rpc_url(), json=payload, timeout=5)
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as exc:
@@ -448,7 +448,7 @@ def _aria2_rpc_call(method: str, params: Optional[List[Any]] = None) -> Any:
         _app_log(
             "download",
             "aria2_rpc_error",
-            f"aria2 RPC 请求失败：{method}",
+            "aria2 无法连接",
             level="ERROR",
             details={"method": method, "error": str(exc)},
         )
@@ -458,7 +458,7 @@ def _aria2_rpc_call(method: str, params: Optional[List[Any]] = None) -> Any:
         _app_log(
             "download",
             "aria2_rpc_invalid_json",
-            f"aria2 RPC 返回无效 JSON：{method}",
+            "aria2 返回了无效数据",
             level="ERROR",
             details={"method": method, "error": str(exc)},
         )
@@ -470,7 +470,7 @@ def _aria2_rpc_call(method: str, params: Optional[List[Any]] = None) -> Any:
         _app_log(
             "download",
             "aria2_rpc_api_error",
-            f"aria2 RPC 调用失败：{method}",
+            f"aria2 操作失败：{message}",
             level="ERROR",
             details={"method": method, "message": message, "code": code},
         )
@@ -591,8 +591,12 @@ _RETRY = Retry(
 _http = requests.Session()
 _http.mount("https://", HTTPAdapter(max_retries=_RETRY))
 _http.mount("http://",  HTTPAdapter(max_retries=_RETRY))
+# aria2 RPC：不重试（失败立即返回错误，避免阻塞事件循环）
+_ARIA2_NO_RETRY = Retry(total=0, raise_on_status=False)
 _aria2_http = requests.Session()
 _aria2_http.trust_env = False
+_aria2_http.mount("https://", HTTPAdapter(max_retries=_ARIA2_NO_RETRY))
+_aria2_http.mount("http://",  HTTPAdapter(max_retries=_ARIA2_NO_RETRY))
 
 
 def tmdb_get(path: str, extra: Optional[dict] = None) -> Optional[dict]:
@@ -1140,13 +1144,14 @@ async def trigger_pipeline(request: Request):
     return {"status": "scheduled" if debounce > 0 else "triggered"}
 
 
-@app.get("/trigger/status")
-async def trigger_status():
-    """查询 pipeline 运行状态。"""
+@app.get("/api/pipeline/status")
+async def pipeline_status():
+    """（需登录）查询 pipeline 运行状态。"""
     return {
         "running":  _pipeline_running,
         "debounce": _debounce_timer is not None,
     }
+
 
 @app.get("/api/library/movies", response_model=List[MediaItem])
 async def get_movies():

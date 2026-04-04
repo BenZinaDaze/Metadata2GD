@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getLogs } from '../api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getLogs, getPipelineStatus } from '../api'
 
 function Dropdown({ value, onChange, options, label = '' }) {
   const [open, setOpen] = useState(false)
@@ -148,13 +148,13 @@ function formatEventDetails(item) {
     case 'options_updated':
       return Array.isArray(details.keys) && details.keys.length ? `更新项：${details.keys.join('、')}` : ''
     case 'aria2_rpc_error':
+      return '请检查 aria2 服务是否正在运行'
     case 'aria2_rpc_invalid_json':
+      return 'aria2 返回了意外的响应格式'
     case 'aria2_rpc_api_error': {
       const parts = []
-      if (details.method) parts.push(`方法：${details.method}`)
-      if (details.message) parts.push(`信息：${details.message}`)
-      if (details.code !== undefined) parts.push(`代码：${details.code}`)
-      if (details.error) parts.push(`原因：${details.error}`)
+      if (details.message) parts.push(details.message)
+      if (details.code !== undefined) parts.push(`错误码 ${details.code}`)
       return parts.join('，')
     }
     case 'webhook_trigger': {
@@ -177,39 +177,88 @@ function formatLogLine(item) {
   return `[${formatTime(item.ts)}] [${item.level}] ${item.message}${detailSuffix}`
 }
 
+// ── 2 s 轮询间隔（pipeline 运行时）──
+const POLL_INTERVAL_MS = 2000
+
 export default function LogsPage() {
   const [items, setItems] = useState([])
   const [level, setLevel] = useState('')
   const [keyword, setKeyword] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [isLive, setIsLive] = useState(false)   // pipeline 正在运行 → 实时模式
+  const [refreshing, setRefreshing] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
+  const timerRef = useRef(null)
+  const mountedRef = useRef(true)
 
-    async function loadLogs() {
-      setLoading(true)
-      try {
-        const res = await getLogs({
-          limit: 200,
-          ...(level ? { level } : {}),
-        })
-        if (cancelled) return
-        setItems(res.data.items || [])
-        setError('')
-      } catch (err) {
-        if (cancelled) return
-        setError(err?.response?.data?.detail || err.message || '加载日志失败')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    loadLogs()
-    return () => {
-      cancelled = true
+  // 拉取日志（不改变 loading 状态，用于轮询静默刷新）
+  const fetchLogs = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true)
+    try {
+      const res = await getLogs({ limit: 500, ...(level ? { level } : {}) })
+      if (!mountedRef.current) return
+      setItems(res.data.items || [])
+      setError('')
+    } catch (err) {
+      if (!mountedRef.current) return
+      setError(err?.response?.data?.detail || err.message || '加载日志失败')
+    } finally {
+      if (mountedRef.current && showLoading) setLoading(false)
     }
   }, [level])
+
+  // 检查 pipeline 状态，并决定是否继续轮询
+  const tick = useCallback(async () => {
+    if (!mountedRef.current) return
+    try {
+      const res = await getPipelineStatus()
+      const running = res?.data?.running || res?.data?.debounce || false
+      if (!mountedRef.current) return
+      setIsLive(running)
+      await fetchLogs(false)
+      if (running && mountedRef.current) {
+        timerRef.current = setTimeout(tick, POLL_INTERVAL_MS)
+      } else {
+        // pipeline 刚结束：再做一次最终拉取
+        timerRef.current = null
+      }
+    } catch {
+      // /api/pipeline/status 访问失败（如未登录 / 401）时，静默停止轮询
+      if (mountedRef.current) setIsLive(false)
+      timerRef.current = null
+    }
+  }, [fetchLogs])
+
+  // 挂载时：先加载日志，再启动轮询检查
+  useEffect(() => {
+    mountedRef.current = true
+    setLoading(true)
+    fetchLogs(false).then(() => {
+      if (mountedRef.current) setLoading(false)
+    })
+    // 轮询入口
+    timerRef.current = setTimeout(tick, POLL_INTERVAL_MS)
+
+    return () => {
+      mountedRef.current = false
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [level])        // level 改变时重新初始化
+
+  // 手动刷新
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true)
+    await fetchLogs(false)
+    setRefreshing(false)
+    // 同时重启轮询
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(tick, POLL_INTERVAL_MS)
+  }, [fetchLogs, tick])
 
   const filteredLines = useMemo(() => {
     const needle = keyword.trim().toLowerCase()
@@ -222,9 +271,34 @@ export default function LogsPage() {
     <div className="flex w-full flex-col gap-6 px-3 pb-8">
       <section className="panel-surface rounded-[32px] px-8 py-8">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <h1 className="text-[36px] leading-[1.05]" style={{ color: 'var(--color-text)' }}>
-            日志
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-[36px] leading-[1.05]" style={{ color: 'var(--color-text)' }}>
+              日志
+            </h1>
+            {isLive && (
+              <span
+                className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold"
+                style={{
+                  background: 'rgba(74, 222, 128, 0.12)',
+                  border: '1px solid rgba(74, 222, 128, 0.35)',
+                  color: '#4ade80',
+                  animation: 'pulse 1.5s ease-in-out infinite',
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: '50%',
+                    background: '#4ade80',
+                    display: 'inline-block',
+                    animation: 'pulse 1.5s ease-in-out infinite',
+                  }}
+                />
+                LIVE
+              </span>
+            )}
+          </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <SearchField value={keyword} onChange={setKeyword} />
@@ -240,6 +314,37 @@ export default function LogsPage() {
                 { value: 'SUCCESS', label: 'SUCCESS' },
               ]}
             />
+            {/* 手动刷新按钮 */}
+            <button
+              type="button"
+              id="logs-refresh-btn"
+              onClick={handleRefresh}
+              disabled={refreshing || loading}
+              className="flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-all duration-150"
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text)',
+                opacity: refreshing || loading ? 0.5 : 1,
+                cursor: refreshing || loading ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ animation: refreshing ? 'spin 0.8s linear infinite' : 'none' }}
+              >
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+              刷新
+            </button>
           </div>
         </div>
       </section>
@@ -255,7 +360,10 @@ export default function LogsPage() {
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>日志内容</h2>
-            <p className="mt-1 text-sm" style={{ color: 'var(--color-muted)' }}>最新 200 条日志，当前显示 {filteredLines.length} 条</p>
+            <p className="mt-1 text-sm" style={{ color: 'var(--color-muted)' }}>
+              最新 500 条日志，当前显示 {filteredLines.length} 条
+              {isLive && <span style={{ color: '#4ade80' }}> · 整理中，每 2 秒自动刷新</span>}
+            </p>
           </div>
         </div>
 
@@ -289,6 +397,15 @@ export default function LogsPage() {
           </div>
         )}
       </section>
+
+      {/* 全局 CSS：spin 动画 */}
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+      `}</style>
     </div>
   )
 }
