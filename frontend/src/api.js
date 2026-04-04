@@ -40,6 +40,7 @@ export const getTvDetail = (tmdbId) => api.get(`/tv/${tmdbId}`)
 // ── 配置 ──
 export const getConfig  = () => api.get('/config')
 export const saveConfig = (data) => api.put('/config', { data })
+export const testParse = (filename) => api.post('/parser/test', { filename })
 
 // ── 媒体库刷新 ──
 export const refreshLibrary = () => api.post('/library/refresh')

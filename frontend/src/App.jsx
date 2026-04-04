@@ -8,6 +8,7 @@ import LibraryPage from './components/LibraryPage'
 import ConfigPage from './components/ConfigPage'
 import DownloadsPage from './components/DownloadsPage'
 import LogsPage from './components/LogsPage'
+import ParseTestModal from './components/ParseTestModal'
 import ToastContainer from './components/Toast'
 
 let _toastId = 0
@@ -24,6 +25,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [aria2Overview, setAria2Overview] = useState(null)
   const [aria2ConnectionStatus, setAria2ConnectionStatus] = useState('connecting')
+  const [showParseTest, setShowParseTest] = useState(false)
 
   const downloadQueue = {
     downloads: 'all',
@@ -156,7 +158,7 @@ export default function App() {
   // ── 已登录 → 主界面 ──────────────────────────────
   return (
     <div className="app-shell">
-      <Topbar onLogout={handleLogout} />
+      <Topbar onLogout={handleLogout} onOpenParseTest={() => setShowParseTest(true)} />
       <Sidebar
         active={activeNav}
         onSelect={setActiveNav}
@@ -201,6 +203,7 @@ export default function App() {
           )}
         </div>
       </main>
+      {showParseTest ? <ParseTestModal onClose={() => setShowParseTest(false)} /> : null}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   )
