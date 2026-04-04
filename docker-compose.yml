@@ -28,8 +28,8 @@ services:
 
 
   # ── Metadata2GD ────────────────────────────────────────────────
-  # host 网络与 aria2-pro 共享，upload.sh 用 localhost:8765/trigger 触发
-  # WebUI 地址：http://localhost:8765
+  # host 网络与 aria2-pro 共享，upload.sh 用 localhost:38765/trigger 触发
+  # WebUI 地址：http://localhost:38765
   metadata2gd:
     container_name: metadata2gd
     image: benz1/metadata2gd:latest
@@ -38,6 +38,8 @@ services:
     volumes:
       # Google Drive 认证文件，不打包进镜像
       - ${PWD}/metadata2gd-config:/app/config
+      # 运行时数据（SQLite DB 等），持久化避免容器重建后丢失
+      - ${PWD}/metadata2gd-data:/app/data
     network_mode: host
     restart: unless-stopped
     logging:

@@ -12,9 +12,9 @@ webui/api.py —— Metadata2GD 媒体库 Web UI 后端
   POST /api/cache/evict     - 手动清理过期缓存
 
 运行方式:
-  conda run -n myself uvicorn webui.api:app --host 0.0.0.0 --port 8765 --reload
+  conda run -n myself uvicorn webui.api:app --host 0.0.0.0 --port 38765 --reload
   # 或在项目根目录:
-  conda run -n myself python -m uvicorn webui.api:app --host 0.0.0.0 --port 8765 --reload
+  conda run -n myself python -m uvicorn webui.api:app --host 0.0.0.0 --port 38765 --reload
 """
 
 import logging
@@ -914,4 +914,4 @@ async def write_config(body: ConfigSaveBody):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("webui.api:app", host="0.0.0.0", port=8765, reload=True)
+    uvicorn.run("webui.api:app", host="0.0.0.0", port=38765, reload=True)

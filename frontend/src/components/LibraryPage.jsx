@@ -252,7 +252,7 @@ export default function LibraryPage({ filter, onChangeFilter, onRefresh, refresh
           <span style={{ fontSize: 120, lineHeight: 1 }}>⚠️</span>
           <p className="text-xl font-medium" style={{ color: 'var(--color-danger)' }}>加载失败：{error}</p>
           <p className="text-sm" style={{ color: 'var(--color-muted)' }}>
-            请确认 FastAPI 后端已在 localhost:8765 运行
+            请确认 FastAPI 后端已在 localhost:38765 运行
           </p>
         </div>
       )}
