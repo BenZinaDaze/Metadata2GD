@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { logout } from '../api'
 import BrandMark from './BrandMark'
 
-export default function Topbar({ onLogout }) {
+export default function Topbar({ onLogout, onOpenParseTest }) {
   const [confirming, setConfirming] = useState(false)
 
   async function handleLogout() {
@@ -52,6 +52,23 @@ export default function Topbar({ onLogout }) {
         >
           Curated Library
         </div>
+        <button
+          onClick={onOpenParseTest}
+          className="flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition-all duration-150"
+          style={{
+            color: 'var(--color-text)',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid var(--color-border)',
+          }}
+          title="解析测试"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M4 7h16"/>
+            <path d="M7 12h10"/>
+            <path d="M10 17h4"/>
+          </svg>
+          解析测试
+        </button>
         {onLogout && (
           <button
             onClick={handleLogout}

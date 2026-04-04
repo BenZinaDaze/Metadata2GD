@@ -25,6 +25,7 @@ import sys
 import threading
 import base64
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlparse
@@ -51,7 +52,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
 from drive.client import DriveClient
-from mediaparser import Config
+from mediaparser import Config, MetaInfo, MetaInfoPath, TmdbClient
+from mediaparser.release_group import ReleaseGroupsMatcher
 from webui.tmdb_cache import TmdbCache
 from webui.library_store import get_library_store
 from webui.log_store import LogStore
@@ -361,6 +363,60 @@ def get_drive_client() -> DriveClient:
                 token_path=drive_cfg.token_json,
             )
     return _client
+
+
+def _get_release_group_matcher() -> ReleaseGroupsMatcher:
+    return ReleaseGroupsMatcher(get_config().parser.custom_release_groups)
+
+
+def _serialize_meta(meta: Any) -> Dict[str, Any]:
+    payload = asdict(meta)
+    payload["type"] = meta.type.to_agent() if getattr(meta, "type", None) else ""
+    payload["type_label"] = meta.type.value if getattr(meta, "type", None) else ""
+    payload["name"] = meta.name
+    payload["season"] = meta.season
+    payload["episode"] = meta.episode
+    payload["season_episode"] = meta.season_episode
+    payload["season_list"] = meta.season_list
+    payload["episode_list"] = meta.episode_list
+    payload["resource_term"] = meta.resource_term
+    payload["edition"] = meta.edition
+    payload["release_group"] = meta.release_group
+    payload["video_term"] = meta.video_term
+    payload["audio_term"] = meta.audio_term
+    payload["frame_rate"] = meta.frame_rate
+    return payload
+
+
+def _serialize_tmdb_result(info: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not info:
+        return None
+
+    media_type = info.get("media_type")
+    title = info.get("title") or info.get("name") or ""
+    original_title = info.get("original_title") or info.get("original_name") or ""
+    release_date = info.get("release_date") or info.get("first_air_date") or ""
+
+    return {
+        "tmdb_id": info.get("tmdb_id") or info.get("id"),
+        "media_type": media_type.to_agent() if hasattr(media_type, "to_agent") else str(media_type or ""),
+        "media_type_label": media_type.value if hasattr(media_type, "value") else "",
+        "title": title,
+        "original_title": original_title,
+        "year": release_date[:4] if release_date else "",
+        "release_date": release_date,
+        "overview": info.get("overview") or "",
+        "rating": round(info.get("vote_average") or 0, 1),
+        "poster_url": TmdbClient.image_url(info.get("poster_path")),
+        "backdrop_url": TmdbClient.image_url(info.get("backdrop_path")),
+        "status": info.get("status") or "",
+        "genres": [genre.get("name") for genre in (info.get("genres") or []) if genre.get("name")],
+        "names": info.get("names") or [],
+        "directors": [person.get("name") for person in (info.get("directors") or []) if person.get("name")],
+        "actors": [person.get("name") for person in (info.get("actors") or []) if person.get("name")][:8],
+        "season_count": info.get("number_of_seasons"),
+        "episode_count": info.get("number_of_episodes"),
+    }
 
 
 def _aria2_rpc_url() -> str:
@@ -1173,6 +1229,10 @@ class ConfigSaveBody(BaseModel):
     data: dict
 
 
+class ParserTestBody(BaseModel):
+    filename: str
+
+
 class Aria2AddUriBody(BaseModel):
     uris: List[str]
     options: Optional[Dict[str, str]] = None
@@ -1232,6 +1292,53 @@ async def read_config():
     raw = _CONFIG_PATH.read_text(encoding="utf-8")
     parsed = yaml.safe_load(raw) or {}
     return parsed
+
+
+@app.post("/api/parser/test")
+async def parser_test(body: ParserTestBody):
+    filename = body.filename.strip()
+    if not filename:
+        raise HTTPException(status_code=400, detail="文件名不能为空")
+
+    cfg = get_config()
+    matcher = _get_release_group_matcher()
+    parser_kwargs = {
+        "custom_words": cfg.parser.custom_words,
+        "release_group_matcher": matcher,
+    }
+
+    if any(sep in filename for sep in ("/", "\\")):
+        meta = MetaInfoPath(filename, **parser_kwargs)
+    else:
+        meta = MetaInfo(filename, isfile=True, **parser_kwargs)
+
+    payload = _serialize_meta(meta)
+    tmdb_payload = None
+    if cfg.tmdb.api_key:
+        try:
+            tmdb_client = TmdbClient(
+                api_key=cfg.tmdb.api_key,
+                language=cfg.tmdb.language,
+                proxy=cfg.tmdb_proxy,
+                timeout=cfg.tmdb.timeout,
+            )
+            tmdb_payload = _serialize_tmdb_result(tmdb_client.recognize(meta))
+        except Exception as exc:
+            logger.warning("解析测试 TMDB 查询失败：%s", exc)
+
+    payload["tmdb"] = tmdb_payload
+    _app_log(
+        "parser",
+        "parse_test",
+        "执行了解析测试",
+        details={
+            "filename": filename,
+            "name": payload.get("name"),
+            "type": payload.get("type"),
+            "tmdbMatched": bool(tmdb_payload),
+        },
+    )
+    return payload
 
 
 @app.put("/api/config")
