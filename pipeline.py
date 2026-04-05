@@ -210,6 +210,10 @@ class Pipeline:
         videos = [f for f in self._client.list_all_recursive(folder_id=scan_folder) if f.is_video]
         if not videos:
             print("  （未找到视频文件）")
+            if scan_folder:
+                print("\n🧹 检查并清理空子文件夹...")
+                self._cleanup_empty_folders(scan_folder, is_root=True)
+                print("  空文件夹清理完毕。")
             return
 
         print(f"  找到 {len(videos)} 个视频文件\n")
@@ -221,6 +225,44 @@ class Pipeline:
 
         self._print_summary(results)
         self._send_notifications()
+
+        if scan_folder:
+            print("\n🧹 检查并清理空子文件夹...")
+            self._cleanup_empty_folders(scan_folder, is_root=True)
+            print("  空文件夹清理完毕。")
+
+    def _cleanup_empty_folders(self, folder_id: str, folder_name: str = "", is_root: bool = False) -> bool:
+        """
+        递归检查子文件夹，如果包含的内容全部移动完毕（即空文件夹），则将其移至回收站。
+        """
+        if self._dry_run:
+            return False
+
+        try:
+            items = self._client.list_files(folder_id)
+        except Exception as e:
+            logger.error("获取文件夹内容失败 [%s]: %s", folder_id, e)
+            return False
+
+        is_empty = True
+        for item in items:
+            if item.is_folder:
+                child_empty = self._cleanup_empty_folders(item.id, folder_name=item.name, is_root=False)
+                if not child_empty:
+                    is_empty = False
+            else:
+                # 存在普通文件
+                is_empty = False
+
+        if is_empty and not is_root:
+            try:
+                self._client.trash_file(folder_id)
+                print(f"      🗑️  清理空文件夹：{folder_name}")
+            except Exception as e:
+                logger.error("清理空文件夹失败 [%s]: %s", folder_name, e)
+                is_empty = False
+
+        return is_empty
 
     def _process_one(self, video: DriveFile, idx: int, total: int) -> ProcessResult:
         print(f"[{idx}/{total}] 🎬  {video.name}")
@@ -649,6 +691,13 @@ class Pipeline:
 # ─────────────────────────────────────────────────────────────────
 
 def main():
+    # 强制让 Windows 下的输出使用 utf-8 编码，防止部分 Emoji 或特殊字符在 GBK 环境下报错崩溃
+    if sys.stdout.encoding.lower() != 'utf-8':
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+
     parser = argparse.ArgumentParser(
         description="Metadata2GD — 扫描 Drive 媒体文件，查询 TMDB 元数据，生成 NFO，整理到目标文件夹",
         formatter_class=argparse.RawDescriptionHelpFormatter,

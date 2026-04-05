@@ -20,7 +20,7 @@ rg_matcher = ReleaseGroupsMatcher(custom_groups=cfg.parser.custom_release_groups
 
 # ── 第一部分：纯解析测试 ────────────────────────────────
 TEST_CASES = [
-    ("【FSD】东岛丹三郎想成为假面骑士[02][我是塔克尔].mp4", "Seihantai"),
+    ("[LoliHouse] 东岛丹三郎想成为假面骑士 / Toujima Tanzaburou wa Kamen Rider ni Naritai - 23 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]", "Seihantai"),
 ]
 
 print("=" * 70)

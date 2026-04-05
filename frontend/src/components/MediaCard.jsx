@@ -7,8 +7,8 @@ function RingProgress({ value, max, size = 18, stroke = 2.4 }) {
   const color = pct >= 1 ? 'var(--color-success)' : pct > 0.5 ? 'var(--color-accent)' : 'var(--color-warning)'
   return (
     <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--color-border)" strokeWidth={stroke} />
-      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={stroke}
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-border)" strokeWidth={stroke} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke}
         strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
         style={{ transition: 'stroke-dasharray 0.4s ease' }} />
     </svg>
@@ -23,7 +23,7 @@ function RingProgress({ value, max, size = 18, stroke = 2.4 }) {
  */
 export default function MediaCard({ item, onClick, compact = false }) {
   const isTV = item.media_type === 'tv'
-  const pct  = isTV && item.total_episodes > 0
+  const pct = isTV && item.total_episodes > 0 && item.in_library_episodes !== undefined
     ? Math.round(item.in_library_episodes / item.total_episodes * 100)
     : null
 
@@ -90,10 +90,10 @@ export default function MediaCard({ item, onClick, compact = false }) {
           {item.year && (
             <span className="shrink-0 text-xs tabular-nums" style={{ color: 'var(--color-muted)' }}>{item.year}</span>
           )}
-          {item.year && !compact && isTV && (
+          {item.year && !compact && isTV && item.in_library_episodes !== undefined && (
             <span className="text-xs shrink-0" style={{ color: 'var(--color-border)' }}>·</span>
           )}
-          {!compact && isTV && (
+          {!compact && isTV && item.in_library_episodes !== undefined && (
             <span className="text-xs truncate" style={{ color: 'var(--color-muted)' }}>
               已入库 {item.in_library_episodes}/{item.total_episodes} 集
             </span>
