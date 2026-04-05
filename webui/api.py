@@ -233,6 +233,8 @@ def _do_run_pipeline() -> None:
 
     _app_log("pipeline", "pipeline_start", "整理流程启动", details={"runId": run_id})
     try:
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
         process = subprocess.Popen(
             [sys.executable, "pipeline.py"],
             cwd=_ROOT_DIR,
@@ -241,6 +243,7 @@ def _do_run_pipeline() -> None:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=env,
         )
         assert process.stdout is not None
         for line in process.stdout:
@@ -392,7 +395,7 @@ def _serialize_tmdb_result(info: Optional[Dict[str, Any]]) -> Optional[Dict[str,
     original_title = info.get("original_title") or info.get("original_name") or ""
     release_date = info.get("release_date") or info.get("first_air_date") or ""
 
-    return {
+    res = {
         "tmdb_id": info.get("tmdb_id") or info.get("id"),
         "media_type": media_type.to_agent() if hasattr(media_type, "to_agent") else str(media_type or ""),
         "media_type_label": media_type.value if hasattr(media_type, "value") else "",
@@ -412,6 +415,28 @@ def _serialize_tmdb_result(info: Optional[Dict[str, Any]]) -> Optional[Dict[str,
         "season_count": info.get("number_of_seasons"),
         "episode_count": info.get("number_of_episodes"),
     }
+
+    if "seasons" in info:
+        # 伪造虚假的 season 数据（其中只有总数而没有入库）
+        seasons_data = []
+        for s in info["seasons"]:
+            sn = s.get("season_number")
+            if sn is None:
+                continue
+            count = s.get("episode_count", 0)
+            episodes = [{"episode_number": i, "in_library": False} for i in range(1, count + 1)]
+            seasons_data.append({
+                "season_number": sn,
+                "season_name": s.get("name") or f"季 {sn}",
+                "poster_url": TmdbClient.image_url(s.get("poster_path")),
+                "air_date": s.get("air_date"),
+                "total_episodes": count,
+                "in_library_episodes": 0,
+                "episodes": episodes,
+            })
+        res["seasons"] = seasons_data
+
+    return res
 
 
 def _aria2_rpc_url() -> str:
@@ -574,7 +599,10 @@ def _aria2_fetch_task_lists() -> Dict[str, List[Dict[str, Any]]]:
     
     for t in stopped:
         norm_t = _aria2_normalize_task(t)
-        if norm_t.get("status") == "complete" and "[METADATA]" in norm_t.get("name", ""):
+        name = norm_t.get("name", "")
+        if norm_t.get("status") == "complete" and (
+            "[METADATA]" in name or bool(re.match(r"^[0-9a-fA-F]{40}\.torrent$", name))
+        ):
             metadata_gids_to_remove.append(norm_t["gid"])
         else:
             normalized_stopped.append(norm_t)
@@ -583,20 +611,20 @@ def _aria2_fetch_task_lists() -> Dict[str, List[Dict[str, Any]]]:
         try:
             for gid in metadata_gids_to_remove:
                 _aria2_rpc_call("removeDownloadResult", [gid])
-            logger.info("自动清理了 %d 个已完成的 [METADATA] 任务", len(metadata_gids_to_remove))
+            logger.info("自动清理了 %d 个已完成的 [METADATA] 或 .torrent 任务", len(metadata_gids_to_remove))
             _app_log(
                 "download",
                 "metadata_purged",
-                f"已自动从队列中横扫清理并移除了 {len(metadata_gids_to_remove)} 个已完成的 [METADATA] 任务",
+                f"已自动从队列中横扫清理并移除了 {len(metadata_gids_to_remove)} 个已完成的种子/元数据任务",
                 level="INFO",
                 details={"count": len(metadata_gids_to_remove), "gids": metadata_gids_to_remove}
             )
         except Exception as e:
-            logger.warning("自动清理 [METADATA] 任务失败：%s", e)
+            logger.warning("自动清理种子/元数据任务失败：%s", e)
             _app_log(
                 "download",
                 "metadata_purge_failed",
-                f"尝试清理已完成的 [METADATA] 任务失败: {e}",
+                f"尝试清理已完成的种子/元数据任务失败: {e}",
                 level="WARNING",
                 details={"error": str(e)}
             )
@@ -1289,6 +1317,7 @@ class Aria2AddUriBody(BaseModel):
     uris: List[str]
     options: Optional[Dict[str, str]] = None
     position: Optional[int] = None
+    title: Optional[str] = None
 
 
 class Aria2AddTorrentBody(BaseModel):
@@ -1296,6 +1325,7 @@ class Aria2AddTorrentBody(BaseModel):
     uris: Optional[List[str]] = None
     options: Optional[Dict[str, str]] = None
     position: Optional[int] = None
+    title: Optional[str] = None
 
 
 class Aria2BatchActionBody(BaseModel):
@@ -1346,6 +1376,30 @@ async def read_config():
     return parsed
 
 
+def _looks_like_file_path(text: str) -> bool:
+    # 1. 明显的双语/分隔符（带有局部空格的斜杠）必然不是路径
+    if " / " in text or " \\" in text or "\\ " in text:
+        return False
+        
+    # 2. 明显的文件系统绝对/相对路径前缀
+    if re.match(r"^([a-zA-Z]:[\\/]|\\\\|/|\./|\.\./)", text):
+        return True
+        
+    # 3. 如果是以中括号/方括号开头，极大概率是 BT 种子命名（即使内部包含 /，也多半是双语分隔）
+    # 例如：[Subs] TitleA/TitleB
+    if text.startswith("[") or text.startswith("【"):
+        return False
+        
+    # 4. 如果包含明确的季数文件夹结构（如 /Season 1/ 或 /S01/ 等）
+    if re.search(r"[/\\](Season\s*\d+|S\d{2}|Specials|Extras|Featurettes|OVA)[/\\]?", text, re.IGNORECASE):
+        return True
+
+    # 5. 兜底逻辑：具备路径的斜杠特征
+    if "/" in text or "\\" in text:
+        return True
+        
+    return False
+
 @app.post("/api/parser/test")
 async def parser_test(body: ParserTestBody):
     filename = body.filename.strip()
@@ -1359,7 +1413,7 @@ async def parser_test(body: ParserTestBody):
         "release_group_matcher": matcher,
     }
 
-    if any(sep in filename for sep in ("/", "\\")):
+    if _looks_like_file_path(filename):
         meta = MetaInfoPath(filename, **parser_kwargs)
     else:
         meta = MetaInfo(filename, isfile=True, **parser_kwargs)
@@ -1485,9 +1539,9 @@ async def aria2_add_uri(body: Aria2AddUriBody):
     _app_log(
         "download",
         "task_added_uri",
-        "已添加链接下载任务",
+        f"已推送下载：{body.title}" if body.title else "已添加链接下载任务",
         level="SUCCESS",
-        details={"gid": gid, "uriCount": len(uris), "name": task.get("name")},
+        details={"gid": gid, "uriCount": len(uris), "name": body.title or task.get("name")},
     )
     return {"ok": True, "task": task}
 
@@ -1513,9 +1567,9 @@ async def aria2_add_torrent(body: Aria2AddTorrentBody):
     _app_log(
         "download",
         "task_added_torrent",
-        "已添加种子下载任务",
+        f"已推送下载：{body.title}" if body.title else "已添加种子下载任务",
         level="SUCCESS",
-        details={"gid": gid, "name": task.get("name")},
+        details={"gid": gid, "name": body.title or task.get("name")},
     )
     return {"ok": True, "task": task}
 
@@ -1588,6 +1642,137 @@ async def aria2_purge_tasks():
     _aria2_rpc_call("purgeDownloadResult")
     _app_log("download", "tasks_purged", "已清空已完成/已停止下载记录", level="SUCCESS")
     return {"ok": True}
+
+# ──────────────────────────────────────────────────────────────
+# Scraper / 爬虫接口
+# ──────────────────────────────────────────────────────────────
+
+try:
+    from scraper.core.factory import SpiderFactory
+except ImportError:
+    SpiderFactory = None
+
+@app.get("/api/tmdb/search_multi")
+async def tmdb_search_multi(keyword: str):
+    from mediaparser.tmdb import TmdbClient
+    cfg = get_config()
+    if not cfg.tmdb.api_key:
+        raise HTTPException(status_code=400, detail="TMDB API Key 未配置")
+    
+    # Initialize TmdbClient with user config
+    tmdb_client = TmdbClient(
+        api_key=cfg.tmdb.api_key,
+        language=cfg.tmdb.language,
+        proxy=cfg.tmdb_proxy,
+        timeout=cfg.tmdb.timeout,
+        cache=get_tmdb_cache(),
+    )
+    
+    try:
+        raw_results = tmdb_client.search_raw_multi(keyword)
+        # Serialize fields so frontend can render them seamlessly
+        serialized = []
+        for r in raw_results:
+            # Skip pure person objects if any
+            if r.get("media_type") not in ("movie", "tv"):
+                continue
+            ser = _serialize_tmdb_result(r)
+            if ser:
+                serialized.append(ser)
+        return {"ok": True, "results": serialized}
+    except Exception as e:
+        logger.error("TMDB 搜索失败: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/tmdb/detail")
+async def tmdb_detail(tmdb_id: int, media_type: str):
+    try:
+        # 同步库信息，优先使用本地缓存以避免请求 TMDB
+        from webui.library_store import get_library_store
+        store = get_library_store()
+        snapshot = store.get_snapshot()
+        
+        if snapshot:
+            if media_type == "movie":
+                found = next((m for m in snapshot["movies"] if str(m.get("tmdb_id", "")) == str(tmdb_id)), None)
+                if found:
+                    found_copy = dict(found)
+                    found_copy["in_library"] = True
+                    return {"ok": True, "detail": found_copy}
+            elif media_type == "tv":
+                found = next((t for t in snapshot["tv_shows"] if str(t.get("tmdb_id", "")) == str(tmdb_id)), None)
+                if found:
+                    found_copy = dict(found)
+                    found_copy["in_library"] = True
+                    return {"ok": True, "detail": found_copy}
+
+        # 本地库没有，则请求 TMDB (较慢，但会走缓存)
+        from mediaparser.tmdb import TmdbClient
+        cfg = get_config()
+        if not cfg.tmdb or not cfg.tmdb.api_key:
+            raise ValueError("TMDB API Key 未配置")
+        tmdb_client = TmdbClient(
+            api_key=cfg.tmdb.api_key,
+            language=cfg.tmdb.language,
+            proxy=cfg.tmdb_proxy,
+            timeout=cfg.tmdb.timeout,
+            cache=get_tmdb_cache(),
+        )
+
+        if media_type == "movie":
+            raw = tmdb_client._get_movie_detail(tmdb_id)
+        else:
+            raw = tmdb_client._get_tv_detail(tmdb_id)
+
+        ser = _serialize_tmdb_result(raw)
+        if not ser:
+            raise ValueError("解析详情失败")
+
+        ser["in_library"] = False
+        return {"ok": True, "detail": ser}
+    except Exception as e:
+        logger.error("TMDB 详情获取失败: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/scraper/search_media")
+async def scraper_search_media(keyword: str):
+    if not SpiderFactory:
+        raise HTTPException(status_code=500, detail="Scraper module not loaded")
+    results = SpiderFactory.search_all(keyword)
+    
+    # 聚合结果
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for r in results:
+        grouped[r.name].append({
+            "site": r.site,
+            "media_id": r.media_id,
+            "url": r.url,
+            "cover_image": r.cover_image,
+            "subgroup_id": getattr(r, "subgroup_id", None)
+        })
+
+    aggregate_results = []
+    for name, sources in grouped.items():
+        cover_image = next((s["cover_image"] for s in sources if s["cover_image"]), None)
+        aggregate_results.append({
+            "name": name,
+            "cover_image": cover_image,
+            "sources": sources
+        })
+
+    return {"ok": True, "results": aggregate_results}
+
+@app.get("/api/scraper/get_episodes")
+async def scraper_get_episodes(site: str, media_id: str, subgroup_id: str = None):
+    if not SpiderFactory:
+        raise HTTPException(status_code=500, detail="Scraper module not loaded")
+    try:
+        spider = SpiderFactory.get_spider(site)
+        episodes = spider.get_episodes(media_id, subgroup_id)
+        return {"ok": True, "episodes": [e.model_dump() for e in episodes]}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 if __name__ == "__main__":

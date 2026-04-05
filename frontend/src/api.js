@@ -27,6 +27,7 @@ api.interceptors.response.use(
 // ── 认证 ──
 export const login   = (username, password) =>
   axios.post('/api/auth/login', { username, password })
+
 export const getMe   = () => api.get('/auth/me')
 export const logout  = () => api.post('/auth/logout')
 
@@ -34,6 +35,14 @@ export const logout  = () => api.post('/auth/logout')
 export const getLibrary  = () => api.get('/library')
 export const getMovies   = () => api.get('/library/movies')
 export const getTvShows  = () => api.get('/library/tv')
+export const tmdbGetEpisodes = (id, season) => api.get(`/tmdb/tv/${id}/season/${season}`)
+
+// ── Scraper ──
+export const tmdbSearchMulti = (keyword) => api.get('/tmdb/search_multi', { params: { keyword } })
+export const tmdbGetDetail = (media_type, tmdb_id) => api.get('/tmdb/detail', { params: { media_type, tmdb_id } })
+export const searchMedia = (keyword) => api.get('/scraper/search_media', { params: { keyword } })
+export const getEpisodes = (site, media_id, subgroup_id) => api.get('/scraper/get_episodes', { params: { site, media_id, subgroup_id } })
+
 export const getStats    = () => api.get('/stats')
 export const getTvDetail = (tmdbId) => api.get(`/tv/${tmdbId}`)
 

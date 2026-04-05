@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { getLibrary } from '../api'
 import MediaCard from './MediaCard'
-import DetailModal from './DetailModal'
+import ScraperDetailModal from './ScraperDetailModal'
 
 /** ISO 时间 → 「x 分钟前」 */
 function relativeTime(isoStr) {
@@ -114,7 +114,8 @@ function LoadingRow() {
   )
 }
 
-export default function LibraryPage({ filter, onChangeFilter, onRefresh, refreshing }) {
+
+export default function LibraryPage({ filter, onChangeFilter, onRefresh, refreshing, onToast, onGlobalSearch }) {
   const [data, setData]         = useState(null)
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState(null)
@@ -164,7 +165,7 @@ export default function LibraryPage({ filter, onChangeFilter, onRefresh, refresh
   return (
     <div className="flex-1">
       <section
-        className="panel-surface rounded-[24px] px-4 py-4 sm:rounded-[32px] sm:px-7 sm:py-7"
+        className="panel-surface rounded-[24px] px-4 py-4 sm:rounded-[32px] sm:px-7 sm:py-7 flex-1 flex flex-col relative"
         style={{ minHeight: 'calc(100dvh - 128px)' }}
       >
         <div className="mb-4 flex flex-col gap-3 sm:mb-7 sm:gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -336,7 +337,15 @@ export default function LibraryPage({ filter, onChangeFilter, onRefresh, refresh
       </section>
 
       {selected && (
-        <DetailModal item={selected} onClose={() => setSelected(null)} />
+        <ScraperDetailModal 
+          item={selected} 
+          onClose={() => setSelected(null)} 
+          onToast={onToast} 
+          onSearchResources={(item) => {
+            onGlobalSearch?.(item)
+            setSelected(null)
+          }}
+        />
       )}
     </div>
   )

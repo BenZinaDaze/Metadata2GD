@@ -74,7 +74,7 @@ function formatStatus(status) {
   return STATUS_MAP[status] ?? status
 }
 
-export default function DetailModal({ item, onClose }) {
+export default function DetailModal({ item, onClose, footerSlot, loadingSlot, headerRightSlot }) {
   const [show, setShow] = useState(false)
 
   const handleClose = useCallback(() => {
@@ -99,7 +99,7 @@ export default function DetailModal({ item, onClose }) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4 pt-28"
+      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto p-4 pt-16 sm:pt-28"
       style={{
         background: 'rgba(2, 8, 18, 0.78)',
         backdropFilter: 'blur(10px)',
@@ -117,10 +117,11 @@ export default function DetailModal({ item, onClose }) {
           transition: 'transform 0.2s',
           boxShadow: 'var(--shadow-strong)',
         }}
+        onClick={e => e.stopPropagation()}
       >
         <div className="relative overflow-hidden" style={{ height: BACKDROP_H }}>
           {item.backdrop_url
-            ? <img src={item.backdrop_url} alt="" className="absolute inset-0 w-full h-full object-cover" />
+            ? <img src={item.backdrop_url} alt="" className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300" style={{ opacity: loadingSlot ? 0.3 : 1 }} />
             : <div className="absolute inset-0" style={{ background: 'var(--color-surface-2)' }} />
           }
           <div className="absolute inset-0"
@@ -129,8 +130,8 @@ export default function DetailModal({ item, onClose }) {
 
         {/* 封面 + 标题信息：统一 flex 容器，横幅下方 */}
         <div
-          className="flex items-end gap-4 px-6 pt-4"
-          style={{ position: 'relative', zIndex: 10 }}
+          className="flex items-end gap-4 px-6 pt-4 transition-opacity duration-300"
+          style={{ position: 'relative', zIndex: 10, opacity: loadingSlot ? 0.5 : 1 }}
         >
           {/* 小封面 */}
           {item.poster_url && (
@@ -149,7 +150,7 @@ export default function DetailModal({ item, onClose }) {
           )}
 
           {/* 文字信息 */}
-          <div className="flex-1 min-w-0 pb-3 pr-10">
+          <div className="flex-1 min-w-0 pb-3 pr-4">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: 'var(--color-accent-hover)' }}>
               Metadata detail
             </div>
@@ -161,7 +162,7 @@ export default function DetailModal({ item, onClose }) {
                 {item.original_title}
               </p>
             )}
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5 mt-2">
               {item.year && (
                 <span className="text-xs px-2 py-0.5 rounded-full"
                   style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--color-muted)', border: '1px solid var(--color-border)' }}>
@@ -180,10 +181,16 @@ export default function DetailModal({ item, onClose }) {
                   {formatStatus(item.status)}
                 </span>
               )}
-              {isTV && (
+              {isTV && item.in_library_episodes !== undefined && item.in_library && (
                 <span className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--color-text)', border: '1px solid var(--color-border)' }}>
-                  {item.in_library_episodes}/{item.total_episodes} 集已入库
+                  style={{ background: 'rgba(74,222,128,0.15)', color: 'var(--color-success)', border: '1px solid var(--color-success)' }}>
+                  {item.in_library_episodes}/{item.total_episodes || '?'} 集已入库
+                </span>
+              )}
+              {!isTV && item.in_library && (
+                <span className="text-xs px-2 py-0.5 rounded-full"
+                  style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--color-success)', border: '1px solid var(--color-border)' }}>
+                  已入库
                 </span>
               )}
               {item.tmdb_id && (
@@ -213,9 +220,24 @@ export default function DetailModal({ item, onClose }) {
               )}
             </div>
           </div>
+          
+          {headerRightSlot && (
+            <div className="pb-3 flex-shrink-0 self-center pr-2">
+              {headerRightSlot}
+            </div>
+          )}
         </div>
 
-        <div className="px-6 pb-6 mt-2">
+        <div className="px-6 pb-2 mt-4 relative">
+          {loadingSlot && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0B1625]/50 backdrop-blur-sm">
+               <span className="text-white/40 text-sm animate-pulse flex items-center gap-2">
+                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><circle cx="12" cy="12" r="10"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                 加载详情中...
+               </span>
+            </div>
+          )}
+
           {item.overview && (
             <p className="mb-5 text-sm leading-7" style={{ color: 'var(--color-muted)' }}>
               {item.overview}
@@ -246,9 +268,15 @@ export default function DetailModal({ item, onClose }) {
           )}
         </div>
 
+        {footerSlot && (
+          <div className="mt-2">
+            {footerSlot}
+          </div>
+        )}
+
         <button
           onClick={handleClose}
-          className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full text-sm transition-colors hover:bg-black/40"
+          className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full text-sm transition-colors hover:bg-black/40 z-50"
           style={{ background: 'rgba(0,0,0,0.45)', color: 'var(--color-text)', border: '1px solid rgba(255,255,255,0.08)' }}
         >
           ✕
@@ -258,3 +286,4 @@ export default function DetailModal({ item, onClose }) {
     document.body
   )
 }
+

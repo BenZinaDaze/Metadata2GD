@@ -8,6 +8,7 @@ import LibraryPage from './components/LibraryPage'
 import ConfigPage from './components/ConfigPage'
 import DownloadsPage from './components/DownloadsPage'
 import LogsPage from './components/LogsPage'
+import ScraperSearch from './components/ScraperSearch'
 import ParseTestModal from './components/ParseTestModal'
 import ToastContainer from './components/Toast'
 
@@ -119,6 +120,7 @@ export default function App() {
   const [aria2ConnectionStatus, setAria2ConnectionStatus] = useState('connecting')
   const [showParseTest, setShowParseTest] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [initialSearchItem, setInitialSearchItem] = useState(null)
 
   const downloadQueue = {
     downloads: 'all',
@@ -299,6 +301,12 @@ export default function App() {
         >
           {activeNav === 'config' ? (
             <ConfigPage />
+          ) : activeNav === 'scraper-search' ? (
+            <ScraperSearch 
+              onToast={addToast} 
+              initialSearchItem={initialSearchItem}
+              onClearInitialSearchItem={() => setInitialSearchItem(null)}
+            />
           ) : activeNav === 'logs' ? (
             <LogsPage />
           ) : downloadQueue ? (
@@ -323,6 +331,11 @@ export default function App() {
               onChangeFilter={setActiveNav}
               onRefresh={handleRefresh}
               refreshing={refreshing}
+              onToast={addToast}
+              onGlobalSearch={(item) => {
+                setInitialSearchItem(item)
+                setActiveNav('scraper-search')
+              }}
             />
           )}
         </div>

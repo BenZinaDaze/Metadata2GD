@@ -340,19 +340,23 @@ class TmdbClient:
 
     # ── HTTP 基础方法 ────────────────────────────────────
 
+    def search_raw_multi(self, query: str) -> List[dict]:
+        """直接透传调用 TMDB 的 /search/multi，返回原始 results 集合（会自动受益于统一的限流代理策略，但不走缓存避免结果陈旧）。"""
+        return self._search("multi", {"query": query})
+
     def _search(self, endpoint: str, params: dict) -> List[dict]:
-        data = self._get("/search/%s" % endpoint, extra_params=params)
+        data = self._get("/search/%s" % endpoint, extra_params=params, use_cache=False)
         if not data:
             return []
         return data.get("results") or []
 
-    def _get(self, path: str, extra_params: Optional[dict] = None) -> Optional[dict]:
+    def _get(self, path: str, extra_params: Optional[dict] = None, use_cache: bool = True) -> Optional[dict]:
         params = {"api_key": self._api_key, "language": self._language}
         if extra_params:
             params.update(extra_params)
         cache_path = self._build_cache_path(path, extra_params)
 
-        if self._cache is not None:
+        if self._cache is not None and use_cache:
             cached = self._cache.get(cache_path, language=self._language)
             if cached is not None:
                 logger.debug("TMDB 缓存命中：%s", cache_path)
@@ -374,14 +378,14 @@ class TmdbClient:
                     return None
                 resp.raise_for_status()
                 data = resp.json()
-                if self._cache is not None:
+                if self._cache is not None and use_cache:
                     self._cache.set(cache_path, data, language=self._language)
                 return data
             except requests.RequestException as e:
                 logger.error("TMDB 请求失败 [%s %s]: %s" % (path, attempt + 1, e))
                 if attempt < 2:
                     time.sleep(2)
-        if self._cache is not None:
+        if self._cache is not None and use_cache:
             self._cache.set_failed(cache_path, language=self._language)
         return None
 
