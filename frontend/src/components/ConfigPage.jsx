@@ -922,6 +922,33 @@ export default function ConfigPage({ onAria2EnabledChange = null }) {
             <FieldRow label="云下载目录 ID" description="115 离线下载默认保存目录 ID">
               <TextInput value={cfg?.u115?.download_folder_id} onChange={v => set('u115', 'download_folder_id', v)} placeholder="115 云下载目录 ID" mono />
             </FieldRow>
+            <FieldRow label="自动整理" description="监听 115 云下载任务，任务完成后自动触发整理流程">
+              <div className="flex items-center gap-3">
+                <Toggle
+                  value={cfg?.u115?.auto_organize_enabled}
+                  onChange={v => set('u115', 'auto_organize_enabled', v)}
+                />
+                <span className="text-xs" style={{ color: 'var(--color-muted)' }}>
+                  {cfg?.u115?.auto_organize_enabled ? '已开启' : '已关闭'}
+                </span>
+              </div>
+            </FieldRow>
+            <FieldRow label="轮询间隔（秒）" description="后台检查 115 云下载任务完成状态的频率">
+              <NumberInput
+                value={cfg?.u115?.auto_organize_poll_seconds ?? 45}
+                onChange={v => set('u115', 'auto_organize_poll_seconds', v)}
+                min={10}
+                max={3600}
+              />
+            </FieldRow>
+            <FieldRow label="完成稳定等待（秒）" description="任务显示完成后，再额外等待多少秒才触发整理">
+              <NumberInput
+                value={cfg?.u115?.auto_organize_stable_seconds ?? 30}
+                onChange={v => set('u115', 'auto_organize_stable_seconds', v)}
+                min={0}
+                max={600}
+              />
+            </FieldRow>
             <FieldRow label="媒体库根目录 ID" description="115 媒体库顶层目录 ID，电影和剧集默认归档到这里">
               <TextInput value={cfg?.u115?.root_folder_id} onChange={v => set('u115', 'root_folder_id', v)} placeholder="115 目录 ID" mono />
             </FieldRow>

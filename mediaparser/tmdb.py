@@ -17,7 +17,7 @@ from typing import Optional, List, Dict, Any
 from urllib.parse import urlencode
 
 import requests
-import zhconv
+from mediaparser.zhconv_compat import zhconv
 
 from mediaparser.meta_base import MetaBase
 from mediaparser.string_utils import StringUtils

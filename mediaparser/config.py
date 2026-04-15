@@ -94,6 +94,9 @@ class U115Config:
     root_folder_id: str = ""
     movie_root_id: str = ""
     tv_root_id: str = ""
+    auto_organize_enabled: bool = False
+    auto_organize_poll_seconds: int = 45
+    auto_organize_stable_seconds: int = 30
 
     @classmethod
     def from_dict(cls, d: dict) -> "U115Config":
@@ -105,6 +108,9 @@ class U115Config:
             root_folder_id=str(d.get("root_folder_id") or ""),
             movie_root_id=str(d.get("movie_root_id") or ""),
             tv_root_id=str(d.get("tv_root_id") or ""),
+            auto_organize_enabled=bool(d.get("auto_organize_enabled", False)),
+            auto_organize_poll_seconds=max(10, int(d.get("auto_organize_poll_seconds") or 45)),
+            auto_organize_stable_seconds=max(0, int(d.get("auto_organize_stable_seconds") or 30)),
         )
 
 

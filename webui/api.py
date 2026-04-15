@@ -28,6 +28,7 @@ import threading
 import base64
 import json
 import uuid
+import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -66,6 +67,7 @@ import u115pan
 from webui.tmdb_cache import TmdbCache
 from webui.library_store import get_library_store
 from webui.log_store import LogStore
+from webui.u115_auto_organize_store import U115AutoOrganizeStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,6 +84,12 @@ _client: Optional[DriveClient] = None
 _storage_provider: Optional[StorageProvider] = None
 _tmdb_cache: Optional[TmdbCache] = None
 _config_mtime_ns: Optional[int] = None
+_u115_auto_organize_store: Optional[U115AutoOrganizeStore] = None
+_u115_auto_organize_thread: Optional[threading.Thread] = None
+_u115_auto_organize_stop = threading.Event()
+_u115_auto_organize_last_polled_at: Optional[str] = None
+_u115_auto_organize_last_poll_error: Optional[str] = None
+_u115_auto_organize_last_triggered_task: Optional[Dict[str, Any]] = None
 TMDB_IMG_BASE = "https://image.tmdb.org/t/p/w500"
 TMDB_IMG_ORIG = "https://image.tmdb.org/t/p/original"
 
@@ -90,6 +98,7 @@ _CACHE_DB = os.path.join(_ROOT_DIR, "config", "data", "tmdb_cache.db")
 _APP_LOG_DIR = os.path.join(_ROOT_DIR, "config", "data", "logs")
 _LEGACY_APP_LOG_DB = os.path.join(_ROOT_DIR, "config", "data", "app_logs.jsonl")
 _JWT_SECRET_FILE = os.path.join(_ROOT_DIR, "config", "data", ".jwt_secret")
+_U115_AUTO_ORGANIZE_DB = os.path.join(_ROOT_DIR, "config", "data", "u115_auto_organize.db")
 _jwt_secret_cache: Optional[str] = None
 _log_store = LogStore(_APP_LOG_DIR, retention_days=7, legacy_path=_LEGACY_APP_LOG_DB)
 _ARIA2_TASK_KEYS = [
@@ -132,6 +141,196 @@ def _infer_pipeline_log_level(line: str) -> str:
     if "⚠" in line or "warning" in text or "跳过" in line:
         return "WARNING"
     return "INFO"
+
+
+def _get_u115_auto_organize_store() -> U115AutoOrganizeStore:
+    global _u115_auto_organize_store
+    if _u115_auto_organize_store is None:
+        _u115_auto_organize_store = U115AutoOrganizeStore(_U115_AUTO_ORGANIZE_DB)
+    return _u115_auto_organize_store
+
+
+def _u115_task_key(task: u115pan.OfflineTask) -> str:
+    if task.info_hash:
+        return f"info_hash:{task.info_hash}"
+    if task.file_id:
+        return f"file_id:{task.file_id}"
+    return f"name:{task.name}|add:{task.add_time or 0}|size:{task.size}"
+
+
+def _poll_u115_auto_organize_once() -> None:
+    global _u115_auto_organize_last_polled_at, _u115_auto_organize_last_poll_error, _u115_auto_organize_last_triggered_task
+    cfg = get_config()
+    _u115_auto_organize_last_polled_at = datetime.now(timezone.utc).isoformat()
+    _u115_auto_organize_last_poll_error = None
+    if cfg.storage.primary != "pan115":
+        return
+    if not cfg.u115.auto_organize_enabled:
+        return
+    if not cfg.u115.download_folder_id:
+        return
+
+    offline = _u115_offline_client()
+    tasks = offline.get_all_tasks()
+    stable_seconds = max(0, cfg.u115.auto_organize_stable_seconds)
+    now = datetime.now(timezone.utc)
+    store = _get_u115_auto_organize_store()
+    completed_to_trigger: list[u115pan.OfflineTask] = []
+
+    for task in tasks:
+        if task.wp_path_id and str(task.wp_path_id) != str(cfg.u115.download_folder_id):
+            continue
+
+        state = store.upsert_observation(
+            task_key=_u115_task_key(task),
+            info_hash=task.info_hash,
+            task_name=task.name,
+            status=task.status,
+            percent_done=task.percent_done,
+            wp_path_id=task.wp_path_id,
+            file_id=task.file_id,
+            is_finished=task.is_finished,
+        )
+        if not task.is_finished or state.triggered_at or not state.finished_seen_at:
+            continue
+
+        finished_seen_at = datetime.fromisoformat(state.finished_seen_at)
+        if (now - finished_seen_at).total_seconds() < stable_seconds:
+            continue
+
+        completed_to_trigger.append(task)
+
+    if not completed_to_trigger:
+        return
+
+    debounce = get_config().telegram.debounce_seconds
+    accepted = schedule_pipeline(debounce)
+    if not accepted:
+        _app_log(
+            "u115",
+            "auto_organize_deferred",
+            "检测到 115 云下载任务完成，但当前整理流程忙碌，等待后续轮询重试",
+            level="WARNING",
+            details={
+                "count": len(completed_to_trigger),
+                "tasks": [
+                    {
+                        "info_hash": task.info_hash,
+                        "name": task.name,
+                        "file_id": task.file_id,
+                        "wp_path_id": task.wp_path_id,
+                    }
+                    for task in completed_to_trigger
+                ],
+            },
+        )
+        return
+
+    for task in completed_to_trigger:
+        store.mark_triggered(_u115_task_key(task))
+    _u115_auto_organize_last_triggered_task = {
+        "triggered_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(completed_to_trigger),
+        "tasks": [
+            {
+                "info_hash": task.info_hash,
+                "name": task.name,
+                "file_id": task.file_id,
+                "wp_path_id": task.wp_path_id,
+            }
+            for task in completed_to_trigger
+        ],
+    }
+    _app_log(
+        "u115",
+        "auto_organize_triggered",
+        f"检测到 {len(completed_to_trigger)} 个 115 云下载任务完成，已触发自动整理",
+        level="SUCCESS",
+        details={
+            "count": len(completed_to_trigger),
+            "debounceSeconds": debounce,
+            "tasks": [
+                {
+                    "info_hash": task.info_hash,
+                    "name": task.name,
+                    "file_id": task.file_id,
+                    "wp_path_id": task.wp_path_id,
+                }
+                for task in completed_to_trigger
+            ],
+        },
+    )
+
+
+def _u115_auto_organize_loop() -> None:
+    global _u115_auto_organize_last_poll_error
+    logger.info("115 自动整理监听线程已启动")
+    while not _u115_auto_organize_stop.is_set():
+        sleep_seconds = 45
+        try:
+            cfg = get_config()
+            sleep_seconds = max(10, cfg.u115.auto_organize_poll_seconds)
+            _poll_u115_auto_organize_once()
+        except (sqlite3.Error, ValueError) as exc:
+            logger.warning("115 自动整理状态处理失败：%s", exc)
+            _u115_auto_organize_last_poll_error = str(exc)
+        except Exception as exc:
+            logger.warning("115 自动整理轮询失败：%s", exc)
+            _u115_auto_organize_last_poll_error = str(exc)
+            _app_log(
+                "u115",
+                "auto_organize_poll_failed",
+                "115 自动整理轮询失败",
+                level="ERROR",
+                details={"error": str(exc)},
+            )
+        _u115_auto_organize_stop.wait(timeout=sleep_seconds)
+    logger.info("115 自动整理监听线程已停止")
+
+
+def _ensure_u115_auto_organize_thread() -> None:
+    global _u115_auto_organize_thread
+    if _u115_auto_organize_thread and _u115_auto_organize_thread.is_alive():
+        return
+    _u115_auto_organize_stop.clear()
+    thread = threading.Thread(
+        target=_u115_auto_organize_loop,
+        name="u115-auto-organize",
+        daemon=True,
+    )
+    thread.start()
+    _u115_auto_organize_thread = thread
+
+
+def _u115_auto_organize_status_payload() -> Dict[str, Any]:
+    cfg = get_config()
+    store = _get_u115_auto_organize_store()
+    last_triggered = store.get_last_triggered()
+    last_triggered_payload = _u115_auto_organize_last_triggered_task
+    if last_triggered and not last_triggered_payload:
+        last_triggered_payload = {
+            "triggered_at": last_triggered.triggered_at,
+            "count": 1,
+            "tasks": [
+                {
+                    "info_hash": last_triggered.info_hash,
+                    "name": last_triggered.task_name,
+                    "file_id": last_triggered.file_id,
+                    "wp_path_id": last_triggered.wp_path_id,
+                }
+            ],
+        }
+    return {
+        "enabled": bool(cfg.u115.auto_organize_enabled and cfg.storage.primary == "pan115"),
+        "storage_primary": cfg.storage.primary,
+        "watcher_alive": bool(_u115_auto_organize_thread and _u115_auto_organize_thread.is_alive()),
+        "poll_seconds": cfg.u115.auto_organize_poll_seconds,
+        "stable_seconds": cfg.u115.auto_organize_stable_seconds,
+        "download_folder_id": cfg.u115.download_folder_id,
+        "last_polled_at": _u115_auto_organize_last_polled_at,
+        "last_poll_error": _u115_auto_organize_last_poll_error,
+        "last_triggered": last_triggered_payload,
+    }
 
 
 # ──────────────────────────────────────────────────────────────
@@ -326,8 +525,8 @@ def _do_run_pipeline() -> None:
             _pipeline_running = False
 
 
-def schedule_pipeline(debounce: int) -> None:
-    """安排 pipeline 运行。debounce>0 则防抖，=0 则立即启动新线程。"""
+def schedule_pipeline(debounce: int) -> bool:
+    """安排 pipeline 运行。debounce>0 则防抖，=0 则立即启动新线程。返回是否接受本次调度。"""
     global _debounce_timer
     with _pl_lock:
         if debounce > 0:
@@ -345,12 +544,14 @@ def schedule_pipeline(debounce: int) -> None:
             t.daemon = True
             t.start()
             _debounce_timer = t
+            return True
         else:
             if _pipeline_running:
                 _app_log("pipeline", "pipeline_skip_running", "整理流程已在运行，跳过本次触发", level="WARNING")
-                return
+                return False
             _app_log("pipeline", "pipeline_schedule", "整理流程立即执行", details={"debounceSeconds": 0})
             threading.Thread(target=_do_run_pipeline, daemon=True).start()
+            return True
 
 
 
@@ -1274,6 +1475,18 @@ app = FastAPI(
     description="查看 Google Drive 上的电影/电视剧入库状态",
     version="1.0.0",
 )
+
+
+@app.on_event("startup")
+async def startup_background_watchers():
+    _ensure_u115_auto_organize_thread()
+
+
+@app.on_event("shutdown")
+async def shutdown_background_watchers():
+    _u115_auto_organize_stop.set()
+    if _u115_auto_organize_store is not None:
+        _u115_auto_organize_store.close()
 
 app.add_middleware(
     CORSMiddleware,
@@ -2420,6 +2633,11 @@ async def u115_offline_overview(
     page: int = Query(1, ge=1),
 ):
     return await run_in_threadpool(_u115_offline_overview_sync, page)
+
+
+@app.get("/api/u115/offline/auto-organize-status")
+async def u115_offline_auto_organize_status():
+    return await run_in_threadpool(_u115_auto_organize_status_payload)
 
 
 def _u115_offline_overview_sync(page: int):
