@@ -189,6 +189,15 @@ u115:
   # 留空则使用 root_folder_id
   tv_root_id: ""
 
+  # 115 云下载完成后是否自动触发整理流程
+  auto_organize_enabled: false
+
+  # 自动整理轮询间隔（秒）
+  auto_organize_poll_seconds: 45
+
+  # 检测到任务完成后，额外等待多少秒再触发整理
+  auto_organize_stable_seconds: 30
+
 # ─────────────────────────────────────────────────────────
 # 流水线设置（pipeline.py）
 # ─────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import {
   addU115OfflineUrls,
   clearU115OfflineTasks,
   deleteU115OfflineTasks,
+  getU115AutoOrganizeStatus,
   getU115OfflineOverview,
   testU115Connection,
 } from '../api'
@@ -23,9 +24,15 @@ function formatBytes(bytes) {
 
 function formatTime(ts) {
   if (!ts) return '-'
-  const value = Number(ts)
-  if (!Number.isFinite(value)) return '-'
-  const ms = value < 1e12 ? value * 1000 : value
+  const asNumber = Number(ts)
+  let ms = asNumber
+  if (!Number.isFinite(asNumber)) {
+    const parsed = new Date(ts)
+    if (Number.isNaN(parsed.getTime())) return '-'
+    ms = parsed.getTime()
+  } else {
+    ms = asNumber < 1e12 ? asNumber * 1000 : asNumber
+  }
   return new Date(ms).toLocaleString('zh-CN', { hour12: false })
 }
 
@@ -130,6 +137,7 @@ function PaginationBar({ pagination, onChange, busy = false }) {
 
 export default function U115OfflinePage({ onToast }) {
   const [overview, setOverview] = useState(null)
+  const [autoOrganizeStatus, setAutoOrganizeStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [urls, setUrls] = useState('')
@@ -150,6 +158,15 @@ export default function U115OfflinePage({ onToast }) {
     }
   }, [onToast, page])
 
+  const loadAutoOrganizeStatus = useCallback(async () => {
+    try {
+      const res = await getU115AutoOrganizeStatus()
+      setAutoOrganizeStatus(res.data)
+    } catch {
+      setAutoOrganizeStatus(null)
+    }
+  }, [])
+
   useEffect(() => {
     loadOverview()
   }, [loadOverview])
@@ -168,21 +185,50 @@ export default function U115OfflinePage({ onToast }) {
   }, [loadDriveSpace])
 
   useEffect(() => {
+    loadAutoOrganizeStatus()
+  }, [loadAutoOrganizeStatus])
+
+  useEffect(() => {
     const timer = setInterval(() => {
       if (!busy) {
         loadOverview()
         loadDriveSpace()
+        loadAutoOrganizeStatus()
       }
     }, 5000)
 
     return () => {
       clearInterval(timer)
     }
-  }, [busy, loadDriveSpace, loadOverview])
+  }, [busy, loadAutoOrganizeStatus, loadDriveSpace, loadOverview])
 
   const tasks = useMemo(() => overview?.tasks || [], [overview])
   const quota = overview?.quota
   const pagination = overview?.pagination
+  const latestTrigger = autoOrganizeStatus?.last_triggered
+  const latestTriggerTask = latestTrigger?.tasks?.[0] || null
+  const autoOrganizeState = autoOrganizeStatus?.enabled
+    ? (
+      autoOrganizeStatus?.last_poll_error
+        ? {
+            label: '异常',
+            color: '#ef4444',
+            bg: 'rgba(239,68,68,0.12)',
+            desc: '自动整理已启用，但最近一次轮询失败',
+          }
+        : {
+            label: '运行中',
+            color: '#3b82f6',
+            bg: 'rgba(59,130,246,0.12)',
+            desc: `每 ${autoOrganizeStatus?.poll_seconds ?? '-'} 秒检查一次，完成后等待 ${autoOrganizeStatus?.stable_seconds ?? '-'} 秒触发整理`,
+          }
+    )
+    : {
+        label: '已关闭',
+        color: '#94a3b8',
+        bg: 'rgba(148,163,184,0.12)',
+        desc: '自动整理未启用',
+      }
 
   const selectedSet = useMemo(() => new Set(selected), [selected])
 
@@ -292,6 +338,71 @@ export default function U115OfflinePage({ onToast }) {
           value={driveSpace ? `${formatBytes(driveSpace.remain_space)} / ${formatBytes(driveSpace.total_space)}` : '无授权'}
           sub={driveSpace ? '剩余空间 / 总空间' : '请先到配置页完成 115 授权'}
         />
+      </div>
+
+      <div
+        className="rounded-[24px] px-5 py-5"
+        style={{
+          background: 'linear-gradient(180deg, rgba(20, 37, 59, 0.88) 0%, rgba(13, 24, 39, 0.96) 100%)',
+          border: '1px solid var(--color-border)',
+          boxShadow: 'var(--shadow-soft)',
+        }}
+      >
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: 'var(--color-accent-hover)' }}>
+            Auto Organize Watcher
+          </div>
+          <span
+            className="rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]"
+            style={{
+              background: autoOrganizeState.bg,
+              color: autoOrganizeState.color,
+            }}
+          >
+            {autoOrganizeState.label}
+          </span>
+        </div>
+        <div className="mb-4 text-sm" style={{ color: 'var(--color-muted)' }}>
+          {autoOrganizeState.desc}
+        </div>
+        <div className="grid gap-2 text-sm md:grid-cols-3" style={{ color: 'var(--color-text)' }}>
+          <div>
+            <div className="text-xs" style={{ color: 'var(--color-muted)' }}>上次轮询</div>
+            <div>{formatTime(autoOrganizeStatus?.last_polled_at)}</div>
+          </div>
+          <div>
+            <div className="text-xs" style={{ color: 'var(--color-muted)' }}>上次触发</div>
+            <div>{formatTime(latestTrigger?.triggered_at)}</div>
+          </div>
+          <div>
+            <div className="text-xs" style={{ color: 'var(--color-muted)' }}>轮询配置</div>
+            <div>
+              {autoOrganizeStatus
+                ? `${autoOrganizeStatus.poll_seconds}s / 稳定等待 ${autoOrganizeStatus.stable_seconds}s`
+                : '-'}
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+          <div>
+            <div className="text-xs" style={{ color: 'var(--color-muted)' }}>上次触发任务</div>
+            <div className="break-all" style={{ color: 'var(--color-text)' }}>
+              {latestTriggerTask?.name || '-'}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs" style={{ color: 'var(--color-muted)' }}>监听目录</div>
+            <div className="break-all" style={{ color: 'var(--color-text)' }}>
+              {autoOrganizeStatus?.download_folder_id || '-'}
+            </div>
+          </div>
+        </div>
+        {autoOrganizeStatus?.last_poll_error ? (
+          <div className="mt-3 rounded-[18px] px-4 py-3 text-xs break-all"
+            style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.24)', color: '#ef4444' }}>
+            最近一次轮询错误：{autoOrganizeStatus.last_poll_error}
+          </div>
+        ) : null}
       </div>
 
       <div

@@ -7,7 +7,7 @@ import traceback
 from typing import Optional
 
 import anitopy
-import zhconv
+from mediaparser.zhconv_compat import zhconv
 
 from mediaparser.meta_base import MetaBase
 from mediaparser.release_group import ReleaseGroupsMatcher
