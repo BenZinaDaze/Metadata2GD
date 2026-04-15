@@ -121,7 +121,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [aria2Overview, setAria2Overview] = useState(null)
   const [aria2ConnectionStatus, setAria2ConnectionStatus] = useState('connecting')
-  const [aria2Enabled, setAria2Enabled] = useState(true)
+  const [aria2Enabled, setAria2Enabled] = useState(null)
   const [showParseTest, setShowParseTest] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [initialSearchItem, setInitialSearchItem] = useState(null)
@@ -148,7 +148,7 @@ export default function App() {
 
   useEffect(() => {
     if (!token) {
-      setAria2Enabled(true)
+      setAria2Enabled(null)
       return
     }
 
@@ -162,7 +162,7 @@ export default function App() {
       })
       .catch(() => {
         if (!cancelled) {
-          setAria2Enabled(true)
+          setAria2Enabled(false)
         }
       })
 
@@ -185,6 +185,12 @@ export default function App() {
 
   useEffect(() => {
     if (!token) {
+      setAria2Overview(null)
+      setAria2ConnectionStatus('connecting')
+      return
+    }
+
+    if (aria2Enabled === null) {
       setAria2Overview(null)
       setAria2ConnectionStatus('connecting')
       return

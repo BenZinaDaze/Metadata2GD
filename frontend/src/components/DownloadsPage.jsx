@@ -469,7 +469,7 @@ function PaginationBar({ pagination, onChange, busy = false }) {
   )
 }
 
-export default function DownloadsPage({ queue = 'all', onChangeQueue, onToast, initialOverview = null, aria2Enabled = true }) {
+export default function DownloadsPage({ queue = 'all', onChangeQueue, onToast, initialOverview = null, aria2Enabled = null }) {
   const [overview, setOverview] = useState(initialOverview)
   const [uriInput, setUriInput] = useState('')
   const [torrentName, setTorrentName] = useState('')
@@ -498,6 +498,9 @@ export default function DownloadsPage({ queue = 'all', onChangeQueue, onToast, i
       setOverview(initialOverview)
       setError(null)
       setLoading(false)
+    } else if (aria2Enabled === null) {
+      setOverview(null)
+      setLoading(true)
     } else if (!aria2Enabled) {
       setOverview(null)
       setLoading(false)
@@ -537,6 +540,11 @@ export default function DownloadsPage({ queue = 'all', onChangeQueue, onToast, i
   const errorCount = useRef(0)
 
   useEffect(() => {
+    if (aria2Enabled === null) {
+      setLoading(true)
+      return
+    }
+
     if (!aria2Enabled) {
       setLoading(false)
       return
