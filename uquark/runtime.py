@@ -87,18 +87,18 @@ class QuarkRuntimeManager:
 
     def _handle_client_token_updated(
         self,
-        client: QuarkClient,
         token: QuarkToken,
     ) -> None:
         """当共享 client 完成 refresh/exchange 后，自动更新 manager 的内存视图。"""
         with self._lock:
-            if not client.token_path:
-                return
-            normalized = self._normalize_token_path(client.token_path)
-            self._clients[normalized] = _ClientEntry(
-                client=client,
-                token_mtime_ns=self._safe_mtime_ns(normalized),
-            )
+            # 遍历找到对应的 client
+            for normalized, entry in list(self._clients.items()):
+                if entry.client.token == token or (entry.client.token and entry.client.token.access_token == token.access_token):
+                    self._clients[normalized] = _ClientEntry(
+                        client=entry.client,
+                        token_mtime_ns=self._safe_mtime_ns(normalized),
+                    )
+                    break
 
 
 _SHARED_RUNTIME_MANAGER = QuarkRuntimeManager()
