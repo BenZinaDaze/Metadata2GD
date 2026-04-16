@@ -433,6 +433,37 @@ class QuarkClient:
         )
         return payload.get("data", {})
 
+    def upload_file(
+        self,
+        file_path: str,
+        file_name: str,
+        parent_id: str = "0",
+    ) -> Optional[str]:
+        """
+        上传本地文件到云盘，返回 file_id
+
+        流程：获取上传URL → PUT上传文件 → 确认完成
+        """
+        file_size = os.path.getsize(file_path)
+        upload_info = self.get_upload_url(file_name, file_size, parent_id)
+
+        upload_url = upload_info.get("upload_url")
+        file_id = upload_info.get("file_id")
+
+        if not upload_url:
+            raise QuarkApiError("未获取到上传URL", payload=upload_info)
+
+        # PUT 文件内容到预签名 URL
+        with open(file_path, "rb") as f:
+            resp = self.session.put(upload_url, data=f, timeout=self.timeout * 10)
+            resp.raise_for_status()
+
+        # 确认上传完成
+        if file_id:
+            self.upload_complete(file_id, parent_id)
+
+        return file_id
+
     def upload_complete(
         self,
         file_id: str,

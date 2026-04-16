@@ -248,26 +248,23 @@ class QuarkProvider(StorageProvider):
         return self._upload_data(content, name, fid)
 
     def _upload_data(self, data: bytes, name: str, fid: str) -> CloudFile:
-        """写临时文件 → 夸克初始化上传 → 返回 CloudFile"""
+        """写临时文件 → 实际上传 → 返回 CloudFile"""
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(name)[1]) as tmp:
             tmp.write(data)
             tmp_path = tmp.name
 
         try:
             client = self._current_client()
-            upload_info = client.get_upload_url(
-                file_name=name,
-                file_size=len(data),
-                parent_id=fid,
-            )
+            # 实际上传文件到夸克云盘
+            file_id = client.upload_file(tmp_path, name, fid)
 
-            # 上传完成后查找文件
+            # 上传完成后查找确认
             uploaded = self.find_file(name, folder_id=fid)
             if uploaded:
                 return uploaded
 
             return CloudFile(
-                id=str(upload_info.get("file_id", "")),
+                id=str(file_id or ""),
                 name=name,
                 file_type=FileType.FILE,
                 size=len(data),
