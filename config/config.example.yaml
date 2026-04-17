@@ -128,6 +128,9 @@ u115:
   # 115 扫码授权会话缓存路径
   session_json: "config/115-device-session.json"
 
+  # 115 Web API Cookie（分享转存等功能使用，可选）
+  cookie: ""
+
   # 115 云下载目录 ID（可选）
   # 用于保存离线下载任务产物
   download_folder_id: ""

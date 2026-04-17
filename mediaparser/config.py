@@ -91,6 +91,7 @@ class U115Config:
     client_id: str = "100197847"
     token_json: str = "config/115-token.json"
     session_json: str = "config/115-device-session.json"
+    cookie: str = ""
     download_folder_id: str = ""
     root_folder_id: str = ""
     movie_root_id: str = ""
@@ -105,6 +106,7 @@ class U115Config:
             client_id=str(d.get("client_id") or "100197847"),
             token_json=str(d.get("token_json") or "config/115-token.json"),
             session_json=str(d.get("session_json") or "config/115-device-session.json"),
+            cookie=str(d.get("cookie") or ""),
             download_folder_id=str(d.get("download_folder_id") or ""),
             root_folder_id=str(d.get("root_folder_id") or ""),
             movie_root_id=str(d.get("movie_root_id") or ""),

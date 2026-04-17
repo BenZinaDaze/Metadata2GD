@@ -21,7 +21,7 @@ from typing import Callable, Iterator, List, Optional
 
 from u115pan.client import Pan115Client
 from u115pan.errors import Pan115ApiError
-from u115pan.models import Pan115File
+from u115pan.models import Pan115File, ReceiveResult, ShareInfo, ShareItem
 from u115pan.runtime import get_runtime_manager
 from storage.base import CloudFile, FileType, StorageProvider
 
@@ -507,3 +507,94 @@ class Pan115Provider(StorageProvider):
         if existing and existing.is_folder:
             return existing
         raise Pan115ApiError(f"创建文件夹失败：{name}")
+
+    # ── 分享转存 ───────────────────────────────────────────────
+
+    def set_cookie(self, cookie: str) -> None:
+        """设置 Cookie 用于 Web API 认证"""
+        self._current_client().set_cookie(cookie)
+
+    @staticmethod
+    def parse_share_url(url: str) -> tuple[str, str]:
+        """解析分享链接，返回 (share_code, password)"""
+        return Pan115Client.parse_share_url(url)
+
+    def get_share_info(
+        self,
+        share_code: str,
+        receive_code: str,
+        *,
+        cid: str = "",
+    ) -> tuple[ShareInfo, list[ShareItem]]:
+        """获取分享链接信息"""
+        return self._current_client().get_share_info(
+            share_code, receive_code, cid=cid
+        )
+
+    def receive_share(
+        self,
+        share_code: str,
+        receive_code: str,
+        file_ids: str | list[str],
+        *,
+        target_folder_id: str = "0",
+    ) -> ReceiveResult:
+        """
+        转存分享文件到网盘。
+
+        Args:
+            share_code: 分享码
+            receive_code: 提取码
+            file_ids: 文件ID列表
+            target_folder_id: 目标目录ID
+
+        Returns:
+            ReceiveResult
+        """
+        cid = "0" if target_folder_id == "root" else target_folder_id
+        return self._current_client().receive_share(
+            share_code, receive_code, file_ids, target_cid=cid
+        )
+
+    def receive_share_all(
+        self,
+        share_code: str,
+        receive_code: str,
+        *,
+        target_folder_id: str = "0",
+        cid: str = "",
+    ) -> ReceiveResult:
+        """转存分享链接中的全部文件"""
+        cid_target = "0" if target_folder_id == "root" else target_folder_id
+        return self._current_client().receive_share_all(
+            share_code, receive_code, target_cid=cid_target, cid=cid
+        )
+
+    def receive_share_by_url(
+        self,
+        url: str,
+        *,
+        target_folder_id: str = "0",
+    ) -> ReceiveResult:
+        """
+        通过分享链接 URL 转存全部文件。
+
+        Args:
+            url: 分享链接（支持带 password 参数）
+            target_folder_id: 目标目录ID
+
+        Returns:
+            ReceiveResult
+        """
+        share_code, password = self.parse_share_url(url)
+        if not share_code:
+            return ReceiveResult(
+                success=False,
+                folder_count=0,
+                file_count=0,
+                total_size=0,
+                error="无法解析分享链接",
+            )
+        return self.receive_share_all(
+            share_code, password, target_folder_id=target_folder_id
+        )

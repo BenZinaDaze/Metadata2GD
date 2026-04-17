@@ -17,7 +17,10 @@ def resolve_config_path(path_str: str) -> str:
 
 def u115_client():
     cfg = get_config().u115
-    return runtime._u115_runtime.get_client(client_id=cfg.client_id, token_path=resolve_config_path(cfg.token_json))
+    client = runtime._u115_runtime.get_client(client_id=cfg.client_id, token_path=resolve_config_path(cfg.token_json))
+    if cfg.cookie.strip():
+        client.set_cookie(cfg.cookie)
+    return client
 
 
 def u115_offline_client():
@@ -136,6 +139,7 @@ def u115_oauth_status_payload():
         "client_id": cfg.client_id,
         "token_path": cfg.token_json,
         "session_path": cfg.session_json,
+        "cookie_configured": bool(cfg.cookie.strip()),
         "token_exists": token_exists,
         "session_exists": session_exists,
         "authorized": authorized,
@@ -265,6 +269,23 @@ def u115_test_connection_sync():
     except Exception as exc:
         logger.exception("115 连接测试失败")
         raise HTTPException(status_code=400, detail=f"115 连接测试失败：{exc}") from exc
+
+
+def u115_test_cookie_sync():
+    cfg = get_config().u115
+    if not cfg.cookie.strip():
+        raise HTTPException(status_code=400, detail="u115.cookie 未配置")
+    try:
+        client = u115_client()
+        user_info = client.get_user_info()
+        if not user_info:
+            raise HTTPException(status_code=400, detail="Cookie 不可用")
+        return {"ok": True, **user_info}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("115 Cookie 测试失败")
+        raise HTTPException(status_code=400, detail=f"115 Cookie 测试失败：{exc}") from exc
 
 
 def u115_offline_overview_sync(page: int):

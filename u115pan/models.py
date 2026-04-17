@@ -205,3 +205,54 @@ class RecycleBinItem:
     category: Optional[str] = None
     size: Optional[int] = None
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+# ── Cookie API 分享转存相关模型 ─────────────────────────────────
+
+
+@dataclass
+class ShareInfo:
+    """分享链接信息"""
+
+    share_code: str
+    receive_code: str
+    title: str
+    file_size: int
+    receive_count: int
+    create_time: Optional[int] = None
+    expire_time: Optional[int] = None
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    snap_id: Optional[str] = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ShareItem:
+    """分享链接中的文件/文件夹项"""
+
+    id: str
+    name: str
+    size: int
+    is_folder: bool
+    modified_time: Optional[str] = None
+    fid: Optional[str] = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def file_id(self) -> str:
+        """返回用于转存的 ID（文件夹用 cid，文件用 fid）"""
+        return self.id if self.is_folder else (self.fid or self.id)
+
+
+@dataclass
+class ReceiveResult:
+    """转存结果"""
+
+    success: bool
+    folder_count: int
+    file_count: int
+    total_size: int
+    title: Optional[str] = None
+    error: Optional[str] = None
+    raw: dict[str, Any] = field(default_factory=dict)

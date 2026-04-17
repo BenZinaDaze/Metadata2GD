@@ -21,6 +21,7 @@ from webui.services.u115 import (
     u115_oauth_poll_sync,
     u115_oauth_qrcode_sync,
     u115_oauth_status_payload,
+    u115_test_cookie_sync,
     u115_test_connection_sync,
 )
 from webui.services.watcher import u115_auto_organize_status_payload
@@ -56,6 +57,11 @@ async def u115_oauth_exchange(body: Optional[U115ExchangeBody] = None):
 @router.post("/api/u115/test")
 async def u115_test_connection():
     return await run_in_threadpool(u115_test_connection_sync)
+
+
+@router.post("/api/u115/test-cookie")
+async def u115_test_cookie():
+    return await run_in_threadpool(u115_test_cookie_sync)
 
 
 @router.get("/api/u115/offline/overview")

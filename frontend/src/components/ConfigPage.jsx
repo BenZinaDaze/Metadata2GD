@@ -11,6 +11,7 @@ import {
   pollU115OauthStatus,
   exchangeU115OauthToken,
   testU115Connection,
+  testU115Cookie,
   fetchU115QrCode,
 } from '../api'
 import CustomWordsHelp from './config/CustomWordsHelp'
@@ -428,11 +429,13 @@ export default function ConfigPage({ onAria2EnabledChange = null, page = 'genera
   const [driveTestBusy, setDriveTestBusy] = useState(false)
   const [u115Oauth, setU115Oauth] = useState(null)
   const [u115OauthMessage, setU115OauthMessage] = useState(null)
+  const [u115CookieMessage, setU115CookieMessage] = useState(null)
   const [u115QrUrl, setU115QrUrl] = useState('')
   const [u115QrPreviewUrl, setU115QrPreviewUrl] = useState('')
   const [u115QrPreviewError, setU115QrPreviewError] = useState('')
   const [u115AuthBusy, setU115AuthBusy] = useState(false)
-  const [u115TestBusy, setU115TestBusy] = useState(false)
+  const [u115CookieTestBusy, setU115CookieTestBusy] = useState(false)
+  const [u115TokenTestBusy, setU115TokenTestBusy] = useState(false)
   const [u115Polling, setU115Polling] = useState(false)
   const [u115StatusLoading, setU115StatusLoading] = useState(true)
   const mountedRef = useRef(true)
@@ -651,8 +654,31 @@ export default function ConfigPage({ onAria2EnabledChange = null, page = 'genera
     }
   }, [cfg?.u115?.client_id, cfg?.u115?.token_json, loadU115OauthStatus])
 
-  async function handleU115Test() {
-    setU115TestBusy(true)
+  async function handleU115CookieTest() {
+    setU115CookieTestBusy(true)
+    setU115CookieMessage(null)
+    try {
+      const res = await testU115Cookie()
+      const data = res?.data || {}
+      const remainSpace = data?.space_info?.all_remain?.size
+      const totalSpace = data?.space_info?.all_total?.size
+      setU115CookieMessage({
+        type: 'success',
+        text: `Cookie 可以用${remainSpace != null && totalSpace != null ? `，剩余空间 ${formatStorageSize(remainSpace)} / 总空间 ${formatStorageSize(totalSpace)}` : ''}`,
+      })
+      loadU115OauthStatus()
+    } catch (e) {
+      setU115CookieMessage({
+        type: 'error',
+        text: e?.response?.data?.detail || e.message || 'Cookie 测试失败',
+      })
+    } finally {
+      setU115CookieTestBusy(false)
+    }
+  }
+
+  async function handleU115ConnectionTest() {
+    setU115TokenTestBusy(true)
     setU115OauthMessage(null)
     try {
       const res = await testU115Connection()
@@ -668,7 +694,7 @@ export default function ConfigPage({ onAria2EnabledChange = null, page = 'genera
         text: e?.response?.data?.detail || e.message || '115 连接测试失败',
       })
     } finally {
-      setU115TestBusy(false)
+      setU115TokenTestBusy(false)
     }
   }
 
@@ -999,6 +1025,34 @@ export default function ConfigPage({ onAria2EnabledChange = null, page = 'genera
             <FieldRow label="Token 路径" description="扫码授权成功后自动生成">
               <TextInput value={cfg?.u115?.token_json} onChange={v => set('u115', 'token_json', v)} placeholder="config/115-token.json" mono />
             </FieldRow>
+            <FieldRow label="Cookie" description="115 Web API Cookie，用于分享转存等基于 Cookie 的功能；留空则关闭这类能力">
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={handleU115CookieTest}
+                    disabled={u115CookieTestBusy || !cfg?.u115?.cookie?.trim()}
+                    className="text-xs px-3 py-1 rounded-full transition-all disabled:opacity-40"
+                    style={{ background: 'linear-gradient(135deg, var(--color-accent) 0%, #b37533 100%)', border: 'none', color: '#fff' }}
+                  >
+                    {u115CookieTestBusy ? '测试中…' : '测试 Cookie'}
+                  </button>
+                  {u115CookieMessage && (
+                    <span
+                      className="text-xs"
+                      style={{ color: u115CookieMessage.type === 'success' ? '#22c55e' : '#ef4444' }}
+                    >
+                      {u115CookieMessage.text}
+                    </span>
+                  )}
+                </div>
+                <TextInput
+                  value={cfg?.u115?.cookie}
+                  onChange={v => set('u115', 'cookie', v)}
+                  placeholder="cookie"
+                  mono
+                />
+              </div>
+            </FieldRow>
             <FieldRow label="授权状态" description="创建二维码后会自动轮询扫码状态，并在确认后自动换取 115 Token">
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1022,12 +1076,12 @@ export default function ConfigPage({ onAria2EnabledChange = null, page = 'genera
                     {u115AuthBusy ? '处理中…' : (u115Polling ? '等待扫码中…' : '开始授权')}
                   </button>
                   <button
-                    onClick={handleU115Test}
-                    disabled={u115TestBusy || u115Oauth?.token_exists === false}
+                    onClick={handleU115ConnectionTest}
+                    disabled={u115TokenTestBusy || u115Oauth?.token_exists === false}
                     className="text-xs px-3 py-1 rounded-full transition-all disabled:opacity-40"
                     style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
                   >
-                    {u115TestBusy ? '测试中…' : '测试 115 连接'}
+                    {u115TokenTestBusy ? '测试中…' : '测试 115 连接'}
                   </button>
                 </div>
 

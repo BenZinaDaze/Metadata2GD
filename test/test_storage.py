@@ -5,6 +5,7 @@ test/test_storage.py —— storage 抽象层单元测试
 import os
 import sys
 import tempfile
+import time
 import pytest
 
 # 确保项目根目录在 path 中
@@ -321,9 +322,56 @@ class TestConfigStorageSelection:
         assert cfg.active_movie_root_id() == "movie-115"
         assert cfg.active_tv_root_id() == "tv-115"
 
+    def test_pan115_cookie_config_is_loaded(self):
+        cfg = Config.from_dict({
+            "u115": {
+                "client_id": "100197847",
+                "cookie": "UID=1; CID=2; SEID=3",
+            },
+        })
+
+        assert cfg.u115.cookie == "UID=1; CID=2; SEID=3"
+
 
 class TestPan115ClientHelpers:
     """115 客户端辅助方法测试"""
+
+    def test_set_cookie_does_not_pollute_shared_session_headers(self):
+        from u115pan.client import Pan115Client
+
+        client = Pan115Client(client_id="test", token=None)
+        original_user_agent = client.session.headers["User-Agent"]
+
+        client.set_cookie("UID=1; CID=2; SEID=3")
+
+        assert client.session.headers["User-Agent"] == original_user_agent
+        assert "Cookie" not in client.session.headers
+        assert client._web_cookie == "UID=1; CID=2; SEID=3"
+
+    def test_cookie_based_methods_short_circuit_when_cookie_missing(self):
+        from u115pan.client import Pan115Client
+
+        client = Pan115Client(client_id="test", token=None)
+
+        info, items = client.get_share_info("share", "code")
+        assert info.raw["error"] == "未设置 115 Web API Cookie"
+        assert items == []
+
+        result = client.receive_share("share", "code", ["fid-1"])
+        assert result.success is False
+        assert result.error == "未设置 115 Web API Cookie"
+
+        assert client.get_user_info() == {}
+
+    def test_parse_share_url_decodes_password(self):
+        from u115pan.client import Pan115Client
+
+        share_code, password = Pan115Client.parse_share_url(
+            "https://115.com/s/abc123?password=a%2Bb%20c"
+        )
+
+        assert share_code == "abc123"
+        assert password == "a+b c"
 
     def test_get_download_url_parses_data_map(self):
         from u115pan.client import Pan115Client
@@ -344,6 +392,80 @@ class TestPan115ClientHelpers:
 
         client._request = fake_request  # type: ignore[method-assign]
         assert client.get_download_url("abc") == "https://example.com/file.txt"
+
+    def test_receive_share_all_uses_first_page_only(self):
+        from u115pan.client import Pan115Client
+        from u115pan.models import ReceiveResult, ShareInfo, ShareItem
+
+        client = Pan115Client(client_id="test", token=None)
+        calls = []
+
+        def fake_get_share_info(share_code, receive_code, *, cid="", offset=0, limit=100):
+            calls.append((offset, limit))
+            info = ShareInfo(
+                share_code=share_code,
+                receive_code=receive_code,
+                title="demo",
+                file_size=123,
+                receive_count=1,
+            )
+            items = [
+                ShareItem(id=f"cid-{i}", name=f"folder-{i}", size=0, is_folder=True)
+                for i in range(limit)
+            ]
+            return info, items
+
+        def fake_receive_share(share_code, receive_code, file_ids, *, target_cid="0"):
+            return ReceiveResult(
+                success=True,
+                folder_count=len(file_ids),
+                file_count=0,
+                total_size=len(file_ids),
+                title="ok",
+                raw={"file_ids": file_ids, "target_cid": target_cid},
+            )
+
+        client.get_share_info = fake_get_share_info  # type: ignore[method-assign]
+        client.receive_share = fake_receive_share  # type: ignore[method-assign]
+
+        result = client.receive_share_all("share", "code", target_cid="99")
+
+        assert calls == [(0, 100)]
+        assert result.success is True
+        assert result.raw["target_cid"] == "99"
+        assert len(result.raw["file_ids"]) == 100
+        assert result.raw["file_ids"][0] == "cid-0"
+        assert result.raw["file_ids"][-1] == "cid-99"
+
+    def test_web_request_enters_cooldown_on_http_429(self):
+        import requests
+
+        from u115pan.client import Pan115Client
+        from u115pan.errors import Pan115RateLimitError
+
+        class DummyResponse:
+            status_code = 429
+
+            def raise_for_status(self):
+                raise requests.HTTPError(response=self)
+
+            def json(self):
+                return {}
+
+        class DummySession:
+            def __init__(self):
+                self.headers = {}
+
+            def request(self, **kwargs):
+                return DummyResponse()
+
+        client = Pan115Client(client_id="test", token=None, session=DummySession())
+        client.set_cookie("UID=1; CID=2; SEID=3")
+
+        with pytest.raises(Pan115RateLimitError):
+            client._web_request("GET", "/files/index_info")
+
+        assert client._cooldown_until > time.time()
 
 
 if __name__ == "__main__":

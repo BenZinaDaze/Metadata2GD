@@ -15,7 +15,7 @@ import random
 import threading
 import time
 from typing import Any, Callable, Optional
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
 
@@ -32,8 +32,11 @@ from .models import (
     Pan115SpaceInfo,
     Pan115Token,
     QrcodeStatus,
+    ReceiveResult,
     RecycleBinItem,
     ResumeInfo,
+    ShareInfo,
+    ShareItem,
     UploadHashes,
     UploadInitInfo,
     UploadToken,
@@ -78,6 +81,7 @@ class Pan115Client:
         self.api_qps = api_qps
         self.download_qps = download_qps
         self.cooldown_seconds = cooldown_seconds
+        self._web_cookie: Optional[str] = None
 
         self._next_api_at = 0.0
         self._next_download_at = 0.0
@@ -741,3 +745,277 @@ class Pan115Client:
                 )
             )
         return results
+
+    # ── Cookie API: 分享转存 ─────────────────────────────────────
+
+    WEB_API = "https://webapi.115.com"
+    COOKIE_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36 MicroMessenger/6.8.0(0x16080000) NetType/WIFI MiniProgramEnv/Mac MacWechat/WMPF XWEB/30626"
+
+    def set_cookie(self, cookie: str) -> None:
+        """设置 Cookie 用于 Web API 认证"""
+        self._web_cookie = cookie.strip()
+
+    def has_cookie(self) -> bool:
+        """当前是否已配置可用的 Web API Cookie"""
+        return bool(self._web_cookie)
+
+    def _web_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[dict[str, Any]] = None,
+        data: Optional[dict[str, Any]] = None,
+        max_attempts: int = 3,
+    ) -> dict[str, Any]:
+        """Web API 请求（基于 Cookie 认证）"""
+        if not self._web_cookie:
+            raise Pan115AuthError("未设置 115 Web API Cookie")
+
+        url = urljoin(self.WEB_API, path)
+        delay = 1.0
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": self.COOKIE_USER_AGENT,
+            "Referer": "https://servicewechat.com/wx2c744c010a61b0fa/94/page-frame.html",
+            "Cookie": self._web_cookie,
+        }
+
+        for attempt in range(1, max_attempts + 1):
+            self._sleep_rate_limit(is_download=False)
+            try:
+                response = self.session.request(
+                    method=method,
+                    url=url,
+                    params=params,
+                    data=data,
+                    headers=headers,
+                    timeout=self.timeout,
+                )
+                if response.status_code == 429:
+                    self._enter_cooldown()
+                    raise Pan115RateLimitError(
+                        "115 Web API 返回 HTTP 429，进入冷却",
+                        code=429,
+                        payload={"status_code": 429},
+                    )
+
+                response.raise_for_status()
+                payload = response.json()
+                if not payload.get("state"):
+                    error = payload.get("error") or "请求失败"
+                    errno = payload.get("errno")
+                    if errno == -1:
+                        raise Pan115AuthError(error, code=errno, payload=payload)
+                    raise Pan115ApiError(error, code=errno, payload=payload)
+                return payload
+            except Pan115RateLimitError:
+                raise
+            except Exception as exc:
+                payload = exc.payload if isinstance(exc, Pan115ApiError) else None
+                if attempt == max_attempts or not self._should_retry(exc, payload):
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 8.0)
+
+        raise Pan115ApiError("115 Web API 请求失败")
+
+    @staticmethod
+    def parse_share_url(url: str) -> tuple[str, str]:
+        """
+        解析分享链接，提取分享码和密码。
+
+        支持格式：
+          - https://115.com/s/{shareCode}?password={password}
+          - https://115cdn.com/s/{shareCode}?password={password}
+
+        返回: (share_code, password)
+        """
+        parsed = urlparse(url)
+        path_parts = [part for part in parsed.path.split("/") if part]
+        share_code = ""
+        if len(path_parts) >= 2 and path_parts[0].lower() == "s":
+            share_code = path_parts[1]
+
+        query = parse_qs(parsed.query)
+        password = query.get("password", [""])[0]
+
+        return share_code, unquote(password)
+
+    def get_share_info(
+        self,
+        share_code: str,
+        receive_code: str,
+        *,
+        cid: str = "",
+        offset: int = 0,
+        limit: int = 100,
+    ) -> tuple[ShareInfo, list[ShareItem]]:
+        """
+        获取分享链接信息。
+
+        Args:
+            share_code: 分享码
+            receive_code: 提取码
+            cid: 子目录ID，根目录传空
+            offset: 偏移量
+            limit: 每页数量
+
+        Returns:
+            (ShareInfo, list[ShareItem])
+        """
+        if not self.has_cookie():
+            return (
+                ShareInfo(
+                    share_code=share_code,
+                    receive_code=receive_code,
+                    title="",
+                    file_size=0,
+                    receive_count=0,
+                    raw={"error": "未设置 115 Web API Cookie"},
+                ),
+                [],
+            )
+
+        payload = self._web_request(
+            "GET",
+            "/share/snap",
+            params={
+                "share_code": share_code,
+                "receive_code": receive_code,
+                "offset": offset,
+                "limit": limit,
+                "cid": cid,
+            },
+        )
+        data = payload.get("data") or {}
+
+        user_info = data.get("userinfo") or {}
+        share_info = data.get("shareinfo") or {}
+
+        info = ShareInfo(
+            share_code=share_code,
+            receive_code=receive_code,
+            title=str(share_info.get("share_title") or ""),
+            file_size=int(share_info.get("file_size") or 0),
+            receive_count=int(share_info.get("receive_count") or 0),
+            create_time=share_info.get("create_time"),
+            expire_time=share_info.get("expire_time"),
+            user_id=str(user_info.get("user_id") or ""),
+            user_name=str(user_info.get("user_name") or ""),
+            snap_id=str(share_info.get("snap_id") or ""),
+            raw=data,
+        )
+
+        items: list[ShareItem] = []
+        for item in data.get("list") or []:
+            is_folder = item.get("cid") is not None
+            items.append(
+                ShareItem(
+                    id=str(item.get("cid") or item.get("fid") or ""),
+                    name=str(item.get("n") or ""),
+                    size=int(item.get("s") or 0),
+                    is_folder=is_folder,
+                    modified_time=str(item.get("t")) if item.get("t") else None,
+                    fid=str(item.get("fid")) if item.get("fid") else None,
+                    raw=item,
+                )
+            )
+
+        return info, items
+
+    def receive_share(
+        self,
+        share_code: str,
+        receive_code: str,
+        file_ids: str | list[str],
+        *,
+        target_cid: str = "0",
+    ) -> ReceiveResult:
+        """
+        转存分享文件到网盘。
+
+        Args:
+            share_code: 分享码
+            receive_code: 提取码
+            file_ids: 文件ID列表（可以是逗号分隔的字符串或列表）
+            target_cid: 目标目录ID，默认根目录
+
+        Returns:
+            ReceiveResult
+        """
+        if not self.has_cookie():
+            return ReceiveResult(
+                success=False,
+                folder_count=0,
+                file_count=0,
+                total_size=0,
+                error="未设置 115 Web API Cookie",
+            )
+
+        if isinstance(file_ids, list):
+            file_ids = ",".join(file_ids)
+
+        try:
+            payload = self._web_request(
+                "POST",
+                "/share/receive",
+                data={
+                    "cid": target_cid,
+                    "share_code": share_code,
+                    "receive_code": receive_code,
+                    "file_id": file_ids,
+                },
+            )
+            data = payload.get("data") or {}
+            return ReceiveResult(
+                success=True,
+                folder_count=int(data.get("recv_folder_count") or 0),
+                file_count=int(data.get("recv_file_count") or 0),
+                total_size=int(data.get("receive_size") or 0),
+                title=str(data.get("receive_title") or ""),
+                raw=data,
+            )
+        except Pan115ApiError as exc:
+            return ReceiveResult(
+                success=False,
+                folder_count=0,
+                file_count=0,
+                total_size=0,
+                error=str(exc),
+                raw={"error": str(exc), "code": exc.code},
+            )
+
+    def receive_share_all(
+        self,
+        share_code: str,
+        receive_code: str,
+        *,
+        target_cid: str = "0",
+        cid: str = "",
+    ) -> ReceiveResult:
+        """
+        转存分享链接中的全部文件。
+
+        默认只处理分享根目录第一页内容（最多 100 条）。
+        """
+        _, items = self.get_share_info(share_code, receive_code, cid=cid)
+        if not items:
+            return ReceiveResult(
+                success=False,
+                folder_count=0,
+                file_count=0,
+                total_size=0,
+                error="分享链接中没有文件",
+            )
+
+        file_ids = [item.file_id for item in items]
+        return self.receive_share(share_code, receive_code, file_ids, target_cid=target_cid)
+
+    def get_user_info(self) -> dict[str, Any]:
+        """获取用户信息（验证 Cookie 有效性）"""
+        if not self.has_cookie():
+            return {}
+
+        payload = self._web_request("GET", "/files/index_info")
+        return payload.get("data") or {}

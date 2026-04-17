@@ -72,6 +72,7 @@ export const pollU115OauthStatus = (config) => api.get('/u115/oauth/poll', {
 })
 export const exchangeU115OauthToken = (data, config) => api.post('/u115/oauth/exchange', data, config)
 export const testU115Connection = () => api.post('/u115/test')
+export const testU115Cookie = () => api.post('/u115/test-cookie')
 export const fetchU115QrCode = (config) => api.get('/u115/oauth/qrcode', { responseType: 'blob', ...(config || {}) })
 export const getU115OfflineOverview = (params) => api.get('/u115/offline/overview', { params })
 export const getU115OfflineQuota = () => api.get('/u115/offline/quota')
