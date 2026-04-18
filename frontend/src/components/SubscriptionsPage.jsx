@@ -100,12 +100,6 @@ function SubscriptionMiniCard({ item, onEdit }) {
         <p className="line-clamp-2 text-[13px] font-semibold leading-snug sm:text-sm" style={{ color: 'var(--color-text)' }}>
           {displayTitle}
         </p>
-
-        {item.last_error ? (
-          <div className="mt-auto pt-2 line-clamp-2 text-[11px] leading-4" style={{ color: 'var(--color-danger)' }}>
-            {item.last_error}
-          </div>
-        ) : null}
       </div>
 
     </article>

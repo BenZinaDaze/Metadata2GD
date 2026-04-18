@@ -434,12 +434,16 @@ def check_subscription_payload(subscription_id: int) -> dict[str, Any]:
 
 
 def poll_subscriptions_once() -> dict[str, Any]:
+    import time
+
     store = _resolve_store()
     records = store.list_enabled_subscriptions()
     checked = 0
     pushed = 0
     errors = 0
-    for record in records:
+    for i, record in enumerate(records):
+        if i > 0:
+            time.sleep(3)  # 3秒延时，防止触发mikan阈值
         checked += 1
         try:
             result = _check_subscription_record(record)

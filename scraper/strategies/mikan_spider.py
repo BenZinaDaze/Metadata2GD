@@ -1,4 +1,5 @@
 import re
+import time
 import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
@@ -13,6 +14,22 @@ class MikanSpider(BaseSpider):
     HEADERS = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2  # seconds between retries
+
+    def _request_with_retry(self, url: str, timeout: int = 15) -> requests.Response:
+        """HTTP request with retry logic."""
+        last_error = None
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                res = requests.get(url, headers=self.HEADERS, timeout=timeout)
+                res.raise_for_status()
+                return res
+            except Exception as e:
+                last_error = e
+                if attempt < self.MAX_RETRIES - 1:
+                    time.sleep(self.RETRY_DELAY)
+        raise last_error
 
     @property
     def site_id(self) -> str:
@@ -20,8 +37,7 @@ class MikanSpider(BaseSpider):
 
     def search_media(self, keyword: str) -> List[MediaItem]:
         search_url = f"{self.BASE_URL}/Home/Search?searchstr={keyword}"
-        res = requests.get(search_url, headers=self.HEADERS, timeout=15)
-        res.raise_for_status()
+        res = self._request_with_retry(search_url)
 
         soup = BeautifulSoup(res.text, "lxml")
         media_items = []
@@ -74,8 +90,7 @@ class MikanSpider(BaseSpider):
         """
         detail_url = f"{self.BASE_URL}/Home/Bangumi/{bgm_id}"
         try:
-            res = requests.get(detail_url, headers=self.HEADERS, timeout=15)
-            res.raise_for_status()
+            res = self._request_with_retry(detail_url)
             soup = BeautifulSoup(res.text, "lxml")
 
             subgroups = []
@@ -97,8 +112,7 @@ class MikanSpider(BaseSpider):
         if subgroup_id:
             rss_url += f"&subgroupid={subgroup_id}"
 
-        res = requests.get(rss_url, headers=self.HEADERS, timeout=15)
-        res.raise_for_status()
+        res = self._request_with_retry(rss_url)
 
         try:
             root = ET.fromstring(res.content)
