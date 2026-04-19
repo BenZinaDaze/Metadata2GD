@@ -115,13 +115,13 @@ http://localhost:38765
 如果你想先看效果、不真正移动文件：
 
 ```bash
-docker exec meta2cloud python pipeline.py --dry-run
+docker exec meta2cloud python -m core --dry-run
 ```
 
 如果你用 115：
 
 ```bash
-docker exec meta2cloud python pipeline.py --storage pan115 --dry-run
+docker exec meta2cloud python -m core --storage pan115 --dry-run
 ```
 
 ---
@@ -179,7 +179,7 @@ docker exec meta2cloud python pipeline.py --storage pan115 --dry-run
 docker run --rm -it \
   -v $(pwd)/meta2cloud-config:/app/config \
   benz1/meta2cloud:latest \
-  python pipeline.py --storage google_drive --dry-run
+  python -m core --storage google_drive --dry-run
 ```
 
 按提示在浏览器里完成授权后，会生成 `token.json`。
@@ -279,31 +279,31 @@ u115:
 ### 正式整理
 
 ```bash
-docker exec meta2cloud python pipeline.py
+docker exec meta2cloud python -m core
 ```
 
 ### 先预览，不真正改动文件
 
 ```bash
-docker exec meta2cloud python pipeline.py --dry-run
+docker exec meta2cloud python -m core --dry-run
 ```
 
 ### 指定用 115 跑
 
 ```bash
-docker exec meta2cloud python pipeline.py --storage pan115
+docker exec meta2cloud python -m core --storage pan115
 ```
 
 ### 跳过 TMDB
 
 ```bash
-docker exec meta2cloud python pipeline.py --no-tmdb
+docker exec meta2cloud python -m core --no-tmdb
 ```
 
 ### 不下载海报
 
 ```bash
-docker exec meta2cloud python pipeline.py --no-images
+docker exec meta2cloud python -m core --no-images
 ```
 
 ### 看日志
@@ -400,7 +400,7 @@ Season 01：
 可以加：
 
 ```bash
-python pipeline.py --no-images
+python -m core --no-images
 ```
 
 ### 5. 我只想试试看，不想真的移动文件
@@ -408,7 +408,7 @@ python pipeline.py --no-images
 加：
 
 ```bash
-python pipeline.py --dry-run
+python -m core --dry-run
 ```
 
 ---
@@ -476,7 +476,9 @@ telegram:
 
 ```text
 Meta2Cloud/
-├─ pipeline.py
+├─ core/
+│  ├─ pipeline.py
+│  └─ organizer.py
 ├─ storage/
 │  ├─ base.py
 │  ├─ google_drive.py
